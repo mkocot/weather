@@ -1,5 +1,5 @@
 
-build: main.ino
+build: weather.ino
 	arduino-cli compile --fqbn esp8266:esp8266:generic --warnings all --export-binaries
 
 config:
