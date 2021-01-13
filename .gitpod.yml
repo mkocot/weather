@@ -1,0 +1,6 @@
+image:
+  file: .gitpod.Dockerfile
+
+tasks:
+  - init: 'arduino-cli compile --fqbn esp8266:esp8266:generic wifi_scan.c'
+    command: 'echo "TODO: Replace with command to start project"'
