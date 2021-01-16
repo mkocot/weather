@@ -12,8 +12,7 @@ import math
 import codecs
 from os.path import exists
 
-# TODO(m): Increase step to 600, Timeout to 1200
-STEP = 300
+STEP = 600
 START = "N"
 MINUTE = 60
 HOUR = 60 * MINUTE
@@ -53,10 +52,10 @@ while True:
         subprocess.run(["rrdtool", "create", rrdfile,
                 "--step", str(STEP),
                 "--start", str(START),
-                "DS:temp:GAUGE:10m:-30:50",
-                "DS:hum:GAUGE:10m:0:100",
-                "DS:pres:GAUGE:10m:600:1200",
-                "DS:volt:GAUGE:10m:0:5",
+                "DS:temp:GAUGE:20m:-30:50",
+                "DS:hum:GAUGE:20m:0:100",
+                "DS:pres:GAUGE:20m:600:1200",
+                "DS:volt:GAUGE:20m:0:5",
                 "RRA:AVERAGE:0.5:1:%d" % SAMPLES_Y # 1 YEAR by STEP Save 1 YEAR by STEP resolution
                  ])
 
