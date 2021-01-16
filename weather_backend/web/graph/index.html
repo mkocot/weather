@@ -49,7 +49,7 @@ document.getElementById("data").addEventListener("load", function () {
   });
   console.log(augmented);
 let opts = {
-  title: "Temp *C",
+  title: "Temp [*C]",
   id: "chart1",
   class: "my-chart",
   width: 800,
@@ -66,7 +66,7 @@ let opts = {
 
       // in-legend display
       label: "Sensor 1",
-      value: (self, rawValue) => rawValue.toFixed(1) + "*C",
+      value: (self, rawValue) => !rawValue && "??" || rawValue.toFixed(1) + "*C",
 
       // series style
       stroke: "red",
@@ -77,32 +77,29 @@ let opts = {
       label: "Sensor 2",
       show: true,
       spanGaps: false,
-      value: (self, rawValue) => !rawValue || rawValue.toFixed(1) + "*C",
+      value: (self, rawValue) => !rawValue && "??" || rawValue.toFixed(1) + "*C",
     }
   ],
 };
   var uplot = new uPlot(opts, [timepoints, data[sensorid]["temp"], data[sensorid2]["temp"]], document.body);
 
-  opts.title = "Humidity";
-  opts.series[1].label = "Hum %";
+  opts.title = "Humidity [%]";
   opts.series[1].fill = "rgba(0, 0, 255, 0.3)";
-  opts.series[1].value = (self, rawValue) => !rawValue || rawValue.toFixed(0) + "%";
+  opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(0) + "%";
   opts.series[1].stroke = "blue";
-  opts.series[2].value = opts.series[2].values;
+  opts.series[2].value = opts.series[1].value;
   var uplot = new uPlot(opts, [timepoints, data[sensorid]["hum"], data[sensorid2]["hum"]], document.body);
 
-  opts.title = "Pressure";
-  opts.series[1].label = "hPa";
+  opts.title = "Pressure [hPa]";
   opts.series[1].fill = "rgba(0, 255, 255, 0.3)";
-  opts.series[1].value = (self, rawValue) => !rawValue || rawValue.toFixed(0) + "hPa";
+  opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(0) + "hPa";
   opts.series[1].stroke = "purple";
   opts.series[2].value = opts.series[1].value;
   var uplot = new uPlot(opts, [timepoints, data[sensorid]["pres"], data[sensorid2]["pres"]], document.body);
 
-  opts.title = "Bat";
-  opts.series[1].label = "V";
+  opts.title = "Bat [V]";
   opts.series[1].fill = "rgba(255, 0, 0, 0.3)";
-  opts.series[1].value = (self, rawValue) => !rawValue || rawValue.toFixed(3) + "V";
+  opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(3) + "V";
   opts.series[1].stroke = "red";
   opts.series[2].value = opts.series[1].value;
   var uplot = new uPlot(opts, [timepoints, data[sensorid]["volt"], data[sensorid2]["volt"]], document.body);
