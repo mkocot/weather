@@ -8,14 +8,11 @@ import json
 
 @bottle.get("/<name>")
 def serve_static(name):
-    print("req: ", name)
     return bottle.static_file(name, "web/graph")
-
 
 @bottle.get("/")
 def index():
     return bottle.static_file("index.html", "web/graph")
-
 
 @bottle.get("/data.json")
 def data():
@@ -31,7 +28,6 @@ def data():
             last = lu
         else:
             last = min(last, lu)
-    print(last)
     lm = time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(last))
     headers['Last-Modified'] = lm
     ims = bottle.request.environ.get('HTTP_IF_MODIFIED_SINCE')
@@ -53,12 +49,14 @@ def data():
     time2 = set(resp[sensors[1]]["time"])
     for fn in sensors:
         resp[fn].pop("time")
-    if time1 != time2:
-        return bottle.HTTPResponse(status=500)
+    # todo: time might diverge +/- one tick
+    #if time1 != time2:
+    #    print(time1-time2, time2-time1)
+    #    return bottle.HTTPResponse(status=500)
 
     resp = json.dumps(resp).encode("utf-8")
     headers['Content-Length'] = len(resp)
     return bottle.HTTPResponse(resp, **headers)
 
 
-bottle.run(host='localhost', port=8080, debug=True)
+bottle.run(host='localhost', port=8086, debug=True)
