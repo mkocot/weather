@@ -8,7 +8,6 @@ import logging
 import datetime
 import base64
 import subprocess
-import math
 import codecs
 from os.path import exists
 
