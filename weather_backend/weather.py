@@ -17,14 +17,19 @@ START = "N"
 MINUTE = 60
 HOUR = 60 * MINUTE
 DAY = 24 * HOUR
-YEAR = 370 * DAY # Yes, longer than 'real' year
+YEAR = 370 * DAY  # Yes, longer than 'real' year
 
-SAMPLES_Y = YEAR/STEP
+SAMPLES_Y = YEAR / STEP
 
-
-stype2name = {1: "temperature", 2: "pressure", 3: "humidity", 4: "time", 5: "volt" }
+stype2name = {
+    1: "temperature",
+    2: "pressure",
+    3: "humidity",
+    4: "time",
+    5: "volt"
+}
 VERSION = 1
-MAGIC = 87 # ASCII 'W'
+MAGIC = 87  # ASCII 'W'
 HEADER_SIZE = 8
 TIME_OFFSET = 946684800
 
@@ -49,39 +54,57 @@ while True:
     idhex = codecs.encode(deviceid, "hex").decode("utf-8")
     rrdfile = "sensors_%s.rrd" % idhex
     if not exists(rrdfile):
-        subprocess.run(["rrdtool", "create", rrdfile,
-                "--step", str(STEP),
-                "--start", str(START),
-                "DS:temp:GAUGE:20m:-30:50",
-                "DS:hum:GAUGE:20m:0:100",
-                "DS:pres:GAUGE:20m:600:1200",
-                "DS:volt:GAUGE:20m:0:5",
-                "RRA:AVERAGE:0.5:1:%d" % SAMPLES_Y # 1 YEAR by STEP Save 1 YEAR by STEP resolution
-                 ])
+        subprocess.run([
+            "rrdtool",
+            "create",
+            rrdfile,
+            "--step",
+            str(STEP),
+            "--start",
+            str(START),
+            "DS:temp:GAUGE:20m:-30:50",
+            "DS:hum:GAUGE:20m:0:100",
+            "DS:pres:GAUGE:20m:600:1200",
+            "DS:volt:GAUGE:20m:0:5",
+            "RRA:AVERAGE:0.5:1:%d" %
+            SAMPLES_Y  # 1 YEAR by STEP Save 1 YEAR by STEP resolution
+        ])
 
     sensorsnum = data[HEADER_SIZE]
     if sensorsnum < 3 or sensorsnum > 10:
         logging.warning("invalid sensors num")
         continue
-    sensors = {"rcvtime": datetime.datetime.utcnow().isoformat(), "raw": base64.b64encode(data).decode('ascii')}
+    sensors = {
+        "rcvtime": datetime.datetime.utcnow().isoformat(),
+        "raw": base64.b64encode(data).decode('ascii')
+    }
     for sid in range(sensorsnum):
-        stype = data[HEADER_SIZE+1+sid*5]
+        stype = data[HEADER_SIZE + 1 + sid * 5]
         if stype == 0:
             logging.warning("unknown sensor: 0")
             break
         if stype == 5:
-            sensors[stype2name[stype]] = struct.unpack('I', data[HEADER_SIZE+1+sid*5+1:HEADER_SIZE+1+sid*5+1+4])[0]
+            sensors[stype2name[stype]] = struct.unpack(
+                'I', data[HEADER_SIZE + 1 + sid * 5 + 1:HEADER_SIZE + 1 +
+                          sid * 5 + 1 + 4])[0]
         elif stype == 4:
-            sensors[stype2name[stype]] = TIME_OFFSET + struct.unpack('i', data[HEADER_SIZE+1+sid*5+1:HEADER_SIZE+1+sid*5+1+4])[0]
+            sensors[stype2name[stype]] = TIME_OFFSET + struct.unpack(
+                'i', data[HEADER_SIZE + 1 + sid * 5 + 1:HEADER_SIZE + 1 +
+                          sid * 5 + 1 + 4])[0]
             #ddd = datetime.datetime.fromtimestamp(sensors[stype2name[stype]])
             #print("ts", ddd)
         else:
-            sensors[stype2name[stype]] = struct.unpack('f', data[HEADER_SIZE+1+sid*5+1:HEADER_SIZE+1+sid*5+1+4])[0]
+            sensors[stype2name[stype]] = struct.unpack(
+                'f', data[HEADER_SIZE + 1 + sid * 5 + 1:HEADER_SIZE + 1 +
+                          sid * 5 + 1 + 4])[0]
     temp = sensors["temperature"]
     hum = sensors["humidity"]
-    pres = sensors["pressure"] * 0.01 # scale Pa to hPa
-    volt = sensors["volt"] * 0.001 # scale mV to V
-    subprocess.run(["rrdtool", "update", rrdfile, "N:%f:%f:%f:%f" % (temp, hum, pres, volt)])
+    pres = sensors["pressure"] * 0.01  # scale Pa to hPa
+    volt = sensors["volt"] * 0.001  # scale mV to V
+    subprocess.run([
+        "rrdtool", "update", rrdfile,
+        "N:%f:%f:%f:%f" % (temp, hum, pres, volt)
+    ])
     sys.stdout.write(json.dumps(sensors))
     sys.stdout.write("\n")
     sys.stdout.flush()
