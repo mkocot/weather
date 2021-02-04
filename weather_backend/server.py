@@ -27,7 +27,7 @@ def data():
         if not last:
             last = lu
         else:
-            last = min(last, lu)
+            last = max(last, lu)
     lm = time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(last))
     headers['Last-Modified'] = lm
     ims = bottle.request.environ.get('HTTP_IF_MODIFIED_SINCE')
