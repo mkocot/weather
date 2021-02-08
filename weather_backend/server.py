@@ -4,6 +4,7 @@ import os
 import time
 import fetch
 import json
+from dbscan import dbscan
 
 
 @bottle.get("/<name>")
@@ -48,7 +49,19 @@ def data():
     time1 = set(resp[sensors[0]]["time"])
     time2 = set(resp[sensors[1]]["time"])
     for fn in sensors:
-        resp[fn].pop("time")
+        sensordata = resp[fn]
+        sensordata.pop("time")
+        # Remove outliers
+        for name in sensordata.keys():
+            data = sensordata[name]
+            if name == "volt":
+                eps = 0.01
+            else:
+                eps = 2
+            outliers = dbscan(data, eps, 3)
+            for i in outliers:
+                data[i] = None
+
     # todo: time might diverge +/- one tick
     #if time1 != time2:
     #    print(time1-time2, time2-time1)
@@ -59,4 +72,4 @@ def data():
     return bottle.HTTPResponse(resp, **headers)
 
 
-bottle.run(host='localhost', port=8086, debug=True)
+bottle.run(host='localhost', port=8086, debug=False, quiet=True)
