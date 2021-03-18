@@ -67,7 +67,7 @@ def _bytise():
     data_start = len(raw_image) - WIDTH * HEIGHT // 8
     return raw_image[data_start:]
 
-def draw_overview(name, hum=None, temp=None, press=None, volt=None) -> bytes:
+def draw_overview(name, hum=None, temp=None, press=None, volt=None):
     _clean()
     canvas.text((0,0), name, fill=WHITE, font=font)
     labels = []

@@ -60,7 +60,7 @@ class ScreenInfo:
 class ScreenThread(Thread):
     _done = Event()
     _lock = Lock()
-    _screens: 'Map[str,ScreenInfo]' = {}
+    _screens = {}
     _rrd = RRD
 
     def __init__(self):

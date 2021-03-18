@@ -15,10 +15,10 @@ class BaseModule():
         pass
 
     @classmethod
-    def parse(cls, data) -> ('BaseModule', int):
+    def parse(cls, data):
         raise NotImplementedError("parse")
 
-    def serialize(self) -> bytes:
+    def serialize(self):
         raise NotImplementedError("serialize")
 
 # don't use directly
@@ -29,7 +29,7 @@ class Simple4Bytes(BaseModule):
         self.value = value
 
     @classmethod
-    def parse(cls, data:bytes) -> bytes:
+    def parse(cls, data:bytes):
         if not isinstance(data, bytes):
             raise Exception("expected bytes")
         if len(data) < 4: # 4 bytes
@@ -41,7 +41,7 @@ class SimpleFloat32(Simple4Bytes):
     BYTE_FORMAT = "f"
 
     @classmethod
-    def parse(cls, data) -> 'SimpleFloat32':
+    def parse(cls, data):
         value, size = super().parse(data)
         return cls(value), size
 
@@ -50,7 +50,7 @@ class SimpleUint32(Simple4Bytes):
     BYTE_FORMAT = "I"
 
     @classmethod
-    def parse(cls, data) -> 'SimpleUint32':
+    def parse(cls, data):
         value, size = super().parse(data)
         return cls(value), size
 
@@ -58,7 +58,7 @@ class SimpleInt32(Simple4Bytes):
     BYTE_FORMAT = "i"
 
     @classmethod
-    def parse(cls, data) -> 'SimpleInt32':
+    def parse(cls, data):
         value, size = super().parse(data)
         return cls(value), size
 
@@ -83,7 +83,7 @@ class ScreenSensor(BaseModule):
         self.height = height
 
     @classmethod
-    def parse(cls, data) -> 'ScreenSensor':
+    def parse(cls, data):
         if len(data) < 4:
             raise Exception("too short")
         # yes, we should parse it as uint16, but whatever
@@ -130,7 +130,7 @@ class DataFrame:
     version = 0
     message_to_broker = None
 
-def serialize(df:DataFrame) -> bytes:
+def serialize(df:DataFrame):
     buffer = BytesIO()
     if df.message_to_broker:
         magic = MAGIC_TO_BROKER
@@ -146,7 +146,7 @@ def serialize(df:DataFrame) -> bytes:
 
     return buffer.getvalue()
 
-def parse(data:bytes) -> DataFrame:
+def parse(data:bytes):
     if not isinstance(data, bytes):
         raise Exception("data is not bytes")
     offset = 0
