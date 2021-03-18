@@ -70,7 +70,6 @@ class ScreenThread(Thread):
         self.setDaemon(True)
 
     def run(self):
-        print("runned")
         while self._done.isSet:
             self._loop()
             self._done.wait(1)
@@ -99,7 +98,7 @@ class ScreenThread(Thread):
             # TODO(m): why empty
             if not sensors_names:
                 continue
-            if d.sensor_idx > len(sensors_names):
+            if d.sensor_idx >= len(sensors_names):
                 d.sensor_idx = 0
             sensor_id = sensors_names[d.sensor_idx]
             selected_sensor = sensors[sensor_id]
