@@ -51,10 +51,12 @@ s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
 class ScreenInfo:
-    deadline = 0
-    state = 0
-    sensor_idx = 0
-    time_to_swith_state = 0
+    def __init__(self):
+        self.deadline = 0
+        self.state = 0
+        self.sensor_idx = 0
+        self.time_to_swith_state = 0
+        self.addr = 'localhost'
 
 
 class ScreenThread(Thread):
@@ -88,13 +90,15 @@ class ScreenThread(Thread):
         # generate images 
         for did, d in devices.items():
             if d.time_to_swith_state > now:
-                print("not yet")
                 continue
             d.time_to_swith_state = now + 5
             sensors = cfg["device"][did].get("screen")
             if not sensors:
                 continue
             sensors_names = list(sensors.keys())
+            # TODO(m): why empty
+            if not sensors_names:
+                continue
             if d.sensor_idx > len(sensors_names):
                 d.sensor_idx = 0
             sensor_id = sensors_names[d.sensor_idx]
@@ -127,21 +131,21 @@ class ScreenThread(Thread):
                 image = draw.draw_graph("V", name, volt)
             else:
                 image = draw.draw_overview(name)
-            df = protocol.DataFrame
+            df = protocol.DataFrame()
             df.device_id = sensor_id
             df.message_to_broker = False
             df.modules = [
                 protocol.ImagePush(128, 32, image)
             ]
             data = protocol.serialize(df)
-            s.sendto(data, ("255.255.255.255",19696))
+            s.sendto(data, (d.addr, 9696))
             d.state += 1
             if d.state > 4:
                 d.sensor_idx += 1
                 d.state = 0
 
 
-    def add_screen(self, id, timeout=120):
+    def add_screen(self, id, addr, timeout=120):
         try:
             self._lock.acquire(blocking=True, timeout=2)
             screen = self._screens.get(id)
@@ -149,13 +153,14 @@ class ScreenThread(Thread):
                 screen = ScreenInfo()
                 self._screens[id] = screen
             screen.deadline = time.time() + timeout
+            screen.addr = addr[0]
         finally:
             self._lock.release()
 
     
 st = ScreenThread()
 st.start()
-st.add_screen("e8db849381ec")
+#st.add_screen("e8db849381ec")
 
 while True:
     # Todo: add MAC
@@ -164,14 +169,10 @@ while True:
     data, addr = sock.recvfrom(1500)
 
     df = protocol.parse(data)
-
     if not df.message_to_broker:
         continue
 
     sensorsnum = len(df.modules)
-    if sensorsnum < 3 or sensorsnum > 10:
-        logging.warning("invalid sensors num")
-        continue
     sensors = {
         "rcvtime": datetime.datetime.utcnow().isoformat(),
         "raw": base64.b64encode(data).decode('ascii')
@@ -181,8 +182,9 @@ while True:
         if module_name:
             sensors[module_name] = sid.value
         if sid.MODULE_ID == protocol.ScreenSensor.MODULE_ID:
-            st.add_screen(df.device_id)
-
+            st.add_screen(df.device_id, addr)
+    if len(sensors) != 6:
+        continue
     temp = sensors["temperature"]
     hum = sensors["humidity"]
     pres = sensors["pressure"] * 0.01  # scale Pa to hPa

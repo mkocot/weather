@@ -89,7 +89,7 @@ class ScreenSensor(BaseModule):
         # yes, we should parse it as uint16, but whatever
         width = data[1]
         height = data[3]
-        return ScreenSensor(width, height)
+        return ScreenSensor(width, height), 4
 
 class ImagePush(BaseModule):
     MODULE_ID = 0x07
@@ -125,10 +125,11 @@ _ID_TO_MODULE = {m.MODULE_ID:m for m in MODULES}
 HEADER_SIZE = 8
 
 class DataFrame:
-    device_id = None,
-    modules = []
-    version = 0
-    message_to_broker = None
+    def __init__(self):
+        self.device_id = None,
+        self.modules = []
+        self.version = 0
+        self.message_to_broker = None
 
 def serialize(df:DataFrame):
     buffer = BytesIO()
