@@ -131,7 +131,7 @@ class ScreenThread(Thread):
             else:
                 image = draw.draw_overview(name)
             df = protocol.DataFrame()
-            df.device_id = sensor_id
+            df.device_id = did
             df.message_to_broker = False
             df.modules = [
                 protocol.ImagePush(128, 32, image)
