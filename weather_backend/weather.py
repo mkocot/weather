@@ -119,15 +119,17 @@ class ScreenThread(Thread):
             press = _filter(raw_data["pres"])
             volt = _filter(raw_data["volt"])
             if d.state == 0:
-                image = draw.draw_overview(name, temp=temp[-1], hum=hum[-1], press=press[-1], volt=volt[-1])
+                image = draw.draw_overview(name, temp=temp[-1], hum=hum[-1],
+                                           press=press[-1], volt=volt[-1],
+                                           time=raw_data["time"][len(temp)-1])
             elif d.state == 1:
-                image = draw.draw_graph("T", name, temp)
+                image = draw.draw_graph("Temp", name, temp)
             elif d.state == 2:
-                image = draw.draw_graph("H", name, hum)
+                image = draw.draw_graph("Hum", name, hum)
             elif d.state == 3:
-                image = draw.draw_graph("P", name, press)
+                image = draw.draw_graph("Pres", name, press)
             elif d.state == 4:
-                image = draw.draw_graph("V", name, volt)
+                image = draw.draw_graph("Volt", name, volt)
             else:
                 image = draw.draw_overview(name)
             df = protocol.DataFrame()
@@ -159,7 +161,7 @@ class ScreenThread(Thread):
     
 st = ScreenThread()
 st.start()
-#st.add_screen("e8db849381ec")
+# st.add_screen("e8db849381ec", ("10.0.0.28", 0))
 
 while True:
     # Todo: add MAC
