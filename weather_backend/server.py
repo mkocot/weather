@@ -17,12 +17,13 @@ def index():
 
 @bottle.get("/data.json")
 def data():
+    rrd = fetch.RRD(".")
     resp = "{}"
     headers = dict()
     last = 0
-    sensors = [fetch.SENSOR_1_NAME, fetch.SENSOR_2_NAME]
+    sensors = ["e09806259a66", "24a1603048ba"]
     for fn in sensors:
-        lu = fetch.lastupdate(fn)
+        lu = rrd.lastupdate(fn)
         if not lu:
             continue
         if not last:
@@ -41,7 +42,7 @@ def data():
     resp = {}
     # ensure we match readouts
     for fn in sensors:
-        data = fetch.rrdfetch(fn)
+        data = rrd.rrdfetch(fn)
         if "time" not in resp:
             resp["time"] = data["time"]
         resp[fn] = data
@@ -72,4 +73,4 @@ def data():
     return bottle.HTTPResponse(resp, **headers)
 
 
-bottle.run(host='localhost', port=8086, debug=False, quiet=True)
+bottle.run(host='localhost', port=4086, debug=False, quiet=True)
