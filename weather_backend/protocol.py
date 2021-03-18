@@ -126,7 +126,7 @@ HEADER_SIZE = 8
 
 class DataFrame:
     device_id = None,
-    modules: 'List[BaseModule]' = []
+    modules = []
     version = 0
     message_to_broker = None
 
