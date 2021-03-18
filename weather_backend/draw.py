@@ -6,6 +6,7 @@ from PIL import Image, ImageDraw, ImageFont
 import socket
 import time
 import fetch
+from datetime import datetime
 
 WHITE = 0
 BLACK = 1
@@ -40,7 +41,7 @@ def draw_graph(title, name, data):
     xpos = 0
     xstep = WIDTH / len(data)
     for n in normalized:
-        graph.append((n, xpos))
+        graph.append((xpos, n))
         xpos += xstep
     graph.append((128, 32))
     # draw graph
@@ -67,7 +68,7 @@ def _bytise():
     data_start = len(raw_image) - WIDTH * HEIGHT // 8
     return raw_image[data_start:]
 
-def draw_overview(name, hum=None, temp=None, press=None, volt=None):
+def draw_overview(name, hum=None, temp=None, press=None, volt=None, time=None):
     _clean()
     canvas.text((0,0), name, fill=WHITE, font=font)
     labels = []
@@ -77,8 +78,10 @@ def draw_overview(name, hum=None, temp=None, press=None, volt=None):
         labels.append("%d%%" % hum)
     if press:
         labels.append("%dhPa" % press)
-    text = "|".join(labels)
+    text = " | ".join(labels)
+    time_text = str(datetime.fromtimestamp(time))
     canvas.text((0, 12), text, fill=WHITE, font=font)
+    canvas.text((0, 22), time_text, fill=WHITE, font=font)
     return _bytise()
 
 def draw_humidity(name):
