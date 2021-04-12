@@ -4,57 +4,95 @@
 #include "config.h"
 
 Adafruit_BME280  bme;
-// TODO: Put correct value
-#define SEALEVELPRESSURE_HPA (1013.25)
-unsigned long delayTime;
 
 
 WiFiUDP Udp;
 #define REPLY_PACKET_SIZE 32
 #define HEADER_SIZE 8
 #define VOLT_THRESHOLD 2000
+// Interval in us: 600s (10m)
+#define W_REPORT_INTERVAL 600000000
 
 
 uint8_t replyPacket[REPLY_PACKET_SIZE];
 #define UDP_PORT 9696
-/* broadcast */
-#define UDP_ADDR 0xFFFFFFFF
+
+#define W_MAX_ADDR 0xFFFFFFFF
+/* broadcast ADDR */
+#define UDP_ADDR W_MAX_ADDR
+
+/* see: https://tools.ietf.org/html/rfc6890
+ * 255.255.255.255/32  Limited Broadcast IP */
+#define W_WIFI_IP W_MAX_ADDR
+#define W_WIFI_NETMASK W_MAX_ADDR
+#define W_WIFI_GATEWAY W_MAX_ADDR
 
 ADC_MODE(ADC_VCC); /* init input voltage mesure */
 uint32_t inVolt;
 
+#define W_SILENT (1)
+#define W_BLINK (0)
+
+#if W_BLINK
 void blink() {
-  #if 1
   digitalWrite(LED_BUILTIN,!digitalRead(LED_BUILTIN));
-  #endif
 }
+
+void setupLED() {
+  pinMode(LED_BUILTIN, OUTPUT);
+}
+
+void enableLED() {
+  digitalWrite(LED_BUILTIN, LOW);
+}
+
+void disableLED() {
+  digitalWrite(LED_BUILTIN, HIGH);
+}
+#else
+#define blink() do {} while(0)
+#define setupLED() do {} while(0)
+#define enableLED() do{} while(0)
+#define disableLED() do{} while(0)
+#endif
 
 void setupWiFi() {
   WiFi.mode(WIFI_STA);
+
+  /* assign static IP */
+  if (!WiFi.config(W_WIFI_IP, W_WIFI_GATEWAY, W_WIFI_NETMASK)) {
+#if! W_SILENT
+    Serial.println("STA Failed to configure");
+#endif
+  }
   WiFi.begin(WIFI_NAME, WIFI_PASS);
+#if !W_SILENT
   Serial.print("Connecting");
+#endif
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
+#if !W_SILENT
     Serial.print(".");
+#endif
     blink();
   }
+#if !W_SILENT
   Serial.println();
-
+  
   Serial.print("Connected, IP address: ");
   Serial.println(WiFi.localIP());
-  // Enable light sleep?
-  // WiFi.setSleepMode(WIFI_LIGHT_SLEEP);
+#endif
 }
 
 void setupBME280() {
-  Serial.println(F("\nBLAH BLAH TEMPERATURE"));
-
   // Enable i2c device (is this required?)
   Wire.begin(4, 0); // SDA=GPIO4 (D2), SCL=GPIO0 (D3)
   int sesnor_ok = bme.begin(BME280_ADDRESS_ALTERNATE);
   if (!sesnor_ok) {
     while (1) {
+#if !W_SILENT
       Serial.println("Could not find a valid BME280 sensor, check wiring!");
+#endif
       delay(1000);
       blink();
     }
@@ -62,68 +100,67 @@ void setupBME280() {
 
   // For more details on the following scenarious, see chapter
   // 3.5 "Recommended modes of operation" in the datasheet
-  // weather monitoring
-  Serial.println("-- Weather Station Scenario --");
-  Serial.println("forced mode, 1x temperature / 1x humidity / 1x pressure oversampling,");
-  Serial.println("filter off");
   bme.setSampling(Adafruit_BME280::MODE_FORCED,
                   Adafruit_BME280::SAMPLING_X1, // temperature
                   Adafruit_BME280::SAMPLING_X1, // pressure
                   Adafruit_BME280::SAMPLING_X1, // humidity
-                  Adafruit_BME280::FILTER_OFF   );
-
-  // suggested rate is 1/60Hz (1m)
-  delayTime = 60000; // in milliseconds
-  // change to 5mins
-  delayTime = 300000;
+                  Adafruit_BME280::FILTER_OFF);
 }
 
 void setup() {
-  pinMode(LED_BUILTIN, OUTPUT);
-  digitalWrite(LED_BUILTIN, LOW); /* enable LED */
+  setupLED();
+  enableLED();
+#if !W_SILENT
   Serial.begin(115200);
   while (!Serial) {
     blink();
-    delay(100); // wait for serial port to connect. Needed for native USB
+    /* wait for serial port to connect. Needed for native USB */
+    delay(100);
   }
+#endif
 
   setupBME280();
   setupWiFi();
-  digitalWrite(LED_BUILTIN, HIGH); /* disable LED */
 
-  /* clear packet */
+  disableLED();
+
+  /* prepare packet */
   memset(replyPacket, 0, REPLY_PACKET_SIZE);
   /* setup header */
-    
   /* just magic 'id' */
   replyPacket[0] = 'W';
   /* version */
   replyPacket[1] = 1;
-    
+
   /* store device MAC 2..7 */
   WiFi.macAddress(&replyPacket[2]);
 }
 
 void loop() {
-  // TODO: Check this in setup()
-  // We are using deepSleep so every iteration starts with setup()
+  /* NOTE: We are using deepSleep so every iteration starts with setup() */
   inVolt = ESP.getVcc();
-  // USB powered: inVolt ~ 3000
-  // We might want detect somehow if battery powered or USB powered
-  // use GPIO jumper?
+
+#if 0
+  /* USB powered: inVolt ~ 3000
+   * We might want detect somehow if battery powered or USB powered
+   * use GPIO jumper? */
   if (inVolt < VOLT_THRESHOLD) {
     ESP.deepSleep(ESP.deepSleepMax());
     return;
   }
-  // Only needed in forced mode! In normal mode, you can remove the next line.
-  bme.takeForcedMeasurement(); // has no effect in normal mode
+#endif
+  /* Only needed in forced mode! In normal mode, you can remove the next line. */
+  bme.takeForcedMeasurement();
 
   sendValues();
-  printValues();
 
-  //delay(delayTime);
+#if !W_SILENT
+  printValues();
   Serial.println("going into deep sleep mode");
-  ESP.deepSleep(delayTime * 1000); 
+#endif
+
+  ESP.deepSleep(W_REPORT_INTERVAL);
+  delay(100);
 }
 
 void sendValues() {
@@ -174,9 +211,11 @@ void sendValues() {
 
   Udp.write(replyPacket, REPLY_PACKET_SIZE);
   Udp.endPacket();
-  Serial.println("delay to send packet");
-  delay(2000);
+  /* NOTE(m): Required to SEND data over networt */
+  yield();
 }
+
+#define SEALEVELPRESSURE_HPA (1013.25)
 void printValues() {
   Serial.print("Temperature = ");
   Serial.print(bme.readTemperature());
