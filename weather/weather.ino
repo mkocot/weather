@@ -22,10 +22,11 @@ uint8_t replyPacket[REPLY_PACKET_SIZE];
 #define UDP_ADDR W_MAX_ADDR
 
 /* see: https://tools.ietf.org/html/rfc6890
- * 255.255.255.255/32  Limited Broadcast IP */
-#define W_WIFI_IP W_MAX_ADDR
-#define W_WIFI_NETMASK W_MAX_ADDR
-#define W_WIFI_GATEWAY W_MAX_ADDR
+ * 255.255.255.255/32 Limited Broadcast IP would be good but not working
+ * 127.127.127.127/32 is reserved for loobpack, but we use broadcast, and it's works */
+#define W_WIFI_IP      IPAddress(127, 255, 255, 255)
+#define W_WIFI_NETMASK IPAddress(255, 255, 255, 255)
+#define W_WIFI_GATEWAY W_WIFI_IP
 
 ADC_MODE(ADC_VCC); /* init input voltage mesure */
 uint32_t inVolt;
@@ -35,7 +36,7 @@ uint32_t inVolt;
 
 #if W_BLINK
 void blink() {
-  digitalWrite(LED_BUILTIN,!digitalRead(LED_BUILTIN));
+  digitalWrite(LED_BUILTIN, !digitalRead(LED_BUILTIN));
 }
 
 void setupLED() {
@@ -213,6 +214,7 @@ void sendValues() {
   Udp.endPacket();
   /* NOTE(m): Required to SEND data over networt */
   yield();
+  delay(100);
 }
 
 #define SEALEVELPRESSURE_HPA (1013.25)
