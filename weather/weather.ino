@@ -71,7 +71,7 @@ void setupWiFi() {
   Serial.print("Connecting");
 #endif
   while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
+    delay(100);
 #if !W_SILENT
     Serial.print(".");
 #endif
@@ -213,8 +213,8 @@ void sendValues() {
   Udp.write(replyPacket, REPLY_PACKET_SIZE);
   Udp.endPacket();
   /* NOTE(m): Required to SEND data over networt */
+  delay(300);
   yield();
-  delay(100);
 }
 
 #define SEALEVELPRESSURE_HPA (1013.25)
