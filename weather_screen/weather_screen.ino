@@ -22,11 +22,11 @@ WiFiUDP Udp;
 
 uint8_t replyPacket[REPLY_PACKET_SIZE];
 uint8_t image[512 + HEADER_SIZE + 6];
-#define UDP_PORT 19696
+#define UDP_PORT 9696
 /* broadcast */
 #define UDP_ADDR 0xFFFFFFFF
 
-#define BROADCAST_INTERVAL 10000
+#define BROADCAST_INTERVAL 30000
 int lastBroadcastTimestamp = -BROADCAST_INTERVAL; /* ensure this will fire ASAP */
 
 int now = 0;
@@ -85,9 +85,9 @@ void setup() {
 
 void notifyBroker() {
   /* broadcast every 10s */
-  Serial.println("notifyBroker: start");
+//  Serial.println("notifyBroker: start");
   if (now - lastBroadcastTimestamp < BROADCAST_INTERVAL) {
-    Serial.println("skip broadcast");
+//    Serial.println("skip broadcast");
     return; 
   }
   lastBroadcastTimestamp = now;
@@ -96,7 +96,7 @@ void notifyBroker() {
   replyPacket[idx++] = 1;
 
   /* send screen size */
-  replyPacket[idx++] = 0x05;
+  replyPacket[idx++] = 0x06;
   replyPacket[idx++] = 0;
   replyPacket[idx++] = SCREEN_WIDTH;
   replyPacket[idx++] = 0;
@@ -104,15 +104,15 @@ void notifyBroker() {
   
   Udp.write(replyPacket, REPLY_PACKET_SIZE);
   Udp.endPacket();
-  delay(2000);
-  Serial.println("notifyBroker: end");
+  delay(100);
+//  Serial.println("notifyBroker: end");
 }
 
 void waitForData() {
   int packetSize = Udp.parsePacket();
   if (packetSize < sizeof(image)) {
     /* Ignore packet: too short */
-    Serial.println("short");
+//    Serial.println("short");
     return;
   }
 
@@ -128,32 +128,32 @@ void waitForData() {
   /* is target mac our mac? */
   if (memcmp(replyPacket+2, image+2, 6)) {
     /* Ignore packet: ID missmatch */
-        Serial.println("ID");
+    Serial.println("ID");
     return;
   }
   if (image[8] != 1) {
     /* Ignore packet: invalid array count
      * Currently only 1 image per packet is supported */
-         Serial.println("!= array count");
+    Serial.println("!= array count");
     return;
   }
-  /* let's reserver 0x06 as SHOW_IMAGE */
-  if (image[9] != 0x06) {
+  /* let's reserver 0x07 as SHOW_IMAGE */
+  if (image[9] != 0x07) {
     /* Ignore packet: invalid data ID */
-        Serial.println("!= data id");
+    Serial.println("!= data id");
     return;
   }
   if (image[11] != SCREEN_WIDTH) {
     /* Ignore packet: invalid width */
-        Serial.println("!= WIDTH");
+    Serial.println("!= WIDTH");
     return;
   }
   if (image[13] != SCREEN_HEIGHT) {
     /* Ignore packet: invalid height */
-        Serial.println("!= HEIGHT");
+    Serial.println("!= HEIGHT");
     return;
   }
-      Serial.println("ok");
+  Serial.println("ok");
   display.clearDisplay();
   /* +6 as we get 'sensors' count, sensor_id, width, height */
   display.drawBitmap(0, 0, image + HEADER_SIZE + 6, SCREEN_WIDTH, SCREEN_HEIGHT, WHITE);
@@ -171,5 +171,5 @@ void loop() {
   notifyBroker();
   waitForData();
   showImage();
-  delay(1000);
+  delay(400);
 }
