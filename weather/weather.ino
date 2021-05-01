@@ -4,17 +4,21 @@
 #include "config.h"
 
 Adafruit_BME280  bme;
-
-
 WiFiUDP Udp;
+ADC_MODE(ADC_VCC); /* init input voltage mesure */
+uint32_t inVolt;
+
 #define REPLY_PACKET_SIZE 32
+uint8_t replyPacket[REPLY_PACKET_SIZE];
+
 #define HEADER_SIZE 8
 #define VOLT_THRESHOLD 2000
-// Interval in us: 600s (10m)
+/* Interval in us: 600s (10m) */
 #define W_REPORT_INTERVAL 600000000
+/* Interval in us: 60s (1m) */
+#define W_ERROR_SLEEP_INTERVAL 60000000
 
 
-uint8_t replyPacket[REPLY_PACKET_SIZE];
 #define UDP_PORT 9696
 
 #define W_MAX_ADDR 0xFFFFFFFF
@@ -27,12 +31,14 @@ uint8_t replyPacket[REPLY_PACKET_SIZE];
 #define W_WIFI_IP      IPAddress(127, 255, 255, 255)
 #define W_WIFI_NETMASK IPAddress(255, 255, 255, 255)
 #define W_WIFI_GATEWAY W_WIFI_IP
-
-ADC_MODE(ADC_VCC); /* init input voltage mesure */
-uint32_t inVolt;
-
+/* 25 tries by 400ms interval = 10s */
+#define W_WIFI_MAX_TRIES 25
+/* Enable (1) silent mode */
 #define W_SILENT (1)
+/* Enable (1) LED blinking */
 #define W_BLINK (0)
+
+#define W_NOOP do {} while(0)
 
 #if W_BLINK
 void blink() {
@@ -51,13 +57,19 @@ void disableLED() {
   digitalWrite(LED_BUILTIN, HIGH);
 }
 #else
-#define blink() do {} while(0)
-#define setupLED() do {} while(0)
-#define enableLED() do{} while(0)
-#define disableLED() do{} while(0)
+#define blink() W_NOOP
+#define setupLED() W_NOOP
+#define enableLED() W_NOOP
+#define disableLED() W_NOOP
 #endif
 
+void exitError() {
+  ESP.deepSleep(W_ERROR_SLEEP_INTERVAL);
+  delay(100);
+}
+
 void setupWiFi() {
+  int i = 0;
   WiFi.mode(WIFI_STA);
 
   /* assign static IP */
@@ -71,11 +83,18 @@ void setupWiFi() {
   Serial.print("Connecting");
 #endif
   while (WiFi.status() != WL_CONNECTED) {
-    delay(100);
+    delay(400);
 #if !W_SILENT
     Serial.print(".");
 #endif
     blink();
+    
+    if (++i >= W_WIFI_MAX_TRIES) {
+#if !W_SILENT
+      Serial.println("Wifi Failed. Emergency exit");
+#endif
+      exitError();
+    }
   }
 #if !W_SILENT
   Serial.println();
@@ -86,25 +105,24 @@ void setupWiFi() {
 }
 
 void setupBME280() {
-  // Enable i2c device (is this required?)
-  Wire.begin(4, 0); // SDA=GPIO4 (D2), SCL=GPIO0 (D3)
+  /* Enable i2c device (is this required?)
+   * SDA=GPIO4 (D2), SCL=GPIO0 (D3) */
+  Wire.begin(4, 0); 
   int sesnor_ok = bme.begin(BME280_ADDRESS_ALTERNATE);
   if (!sesnor_ok) {
-    while (1) {
 #if !W_SILENT
       Serial.println("Could not find a valid BME280 sensor, check wiring!");
 #endif
-      delay(1000);
       blink();
-    }
+      exitError();
   }
 
-  // For more details on the following scenarious, see chapter
-  // 3.5 "Recommended modes of operation" in the datasheet
+  /* For more details on the following scenarious, see chapter
+   * 3.5 "Recommended modes of operation" in the datasheet */
   bme.setSampling(Adafruit_BME280::MODE_FORCED,
-                  Adafruit_BME280::SAMPLING_X1, // temperature
-                  Adafruit_BME280::SAMPLING_X1, // pressure
-                  Adafruit_BME280::SAMPLING_X1, // humidity
+                  Adafruit_BME280::SAMPLING_X1, /* temperature */
+                  Adafruit_BME280::SAMPLING_X1, /* pressure */
+                  Adafruit_BME280::SAMPLING_X1, /* humidity */
                   Adafruit_BME280::FILTER_OFF);
 }
 
