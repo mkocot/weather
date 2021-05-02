@@ -43,6 +43,8 @@ def data():
     # ensure we match readouts
     for fn in sensors:
         data = rrd.rrdfetch(fn)
+        if "time" not in data:
+            data["time"] = [int(time.time())]
         if "time" not in resp:
             resp["time"] = data["time"]
         resp[fn] = data
@@ -73,4 +75,4 @@ def data():
     return bottle.HTTPResponse(resp, **headers)
 
 
-bottle.run(host='localhost', port=4086, debug=False, quiet=True)
+bottle.run(host='localhost', port=8086, debug=False, quiet=True)
