@@ -75,7 +75,7 @@ class ScreenThread(Thread):
         now = time.time()
         try:
             self._lock.acquire(blocking=True)
-            devices = self._screens.keys()
+            devices = list(self._screens.keys())
             for d in devices:
                 if self._screens[d].deadline < now:
                     del self._screens[d]
