@@ -40,15 +40,12 @@ if not isdir(storage_path):
     print("rrd path is not directory: %s" % storage_path)
     exit(1)
 
-sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 host, port = cfg["bind"]["address"].split(":")
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 sock.bind((host, int(port)))
 
 RRD = fetch.RRD(storage_path)
-
-
-s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-s.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
 class ScreenInfo:
     def __init__(self):
@@ -139,7 +136,7 @@ class ScreenThread(Thread):
                 protocol.ImagePush(128, 32, image)
             ]
             data = protocol.serialize(df)
-            s.sendto(data, (d.addr, 9696))
+            sock.sendto(data, (d.addr, 9696))
             d.state += 1
             if d.state > 4:
                 d.sensor_idx += 1
