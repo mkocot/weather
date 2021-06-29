@@ -35,8 +35,60 @@ module tower(size) {
     cube(size + [0, 0, offset], center=true);
   }
   }
+  
+  hole_d = 5;
+  spacing = 2;
+  module shell_holes() {
+    h = 3*wall;
+    offset_to_first = (size.y  - hole_d - spacing)/2;
+    offset_to_bottom = (size.z - hole_d - spacing)/2;
+    offset_to_side = (outer_size.x)/2;
+    y_max = floor((size.y)/(hole_d+spacing));
+    z_max = floor((size.z)/(hole_d+spacing));
+    module right_side() {
+      translate([offset_to_side, -offset_to_first, -offset_to_bottom])
+      for (y = [0:y_max-1]) {
+        translate([0, (hole_d+spacing)*y, 0])
+        hull()
+        for (z = [(y%2==0?2:1)-1:z_max-(y%2==0?1:2)]) {
+          translate([0, 0, (hole_d+spacing)*z])
+          rotate([0, 90, 0]) cylinder(h = h, d=hole_d, center=true);
+        }
+      }
+    }
+        
+    // aaand TOP ones
+    module top_holes() {
+      h = 15;
+      offset_to_top = (outer_size.y)/2;
+      
+      module hole_h() {
+      module hole() {
+      translate([0, offset_to_top, 0])
+      rotate([90, 0, 0])
+      cylinder(h=h, d=3, center=true);
+      }
+      hull() {
+      mirror([1, 0, 0]) translate([size.x/2-5 - wall, 0, 0]) hole();
+     translate([size.x/2-5 - wall, 0, 0]) hole();
+      }
+    }
+    for (z = [-2:2]) {
+      translate([0, 0, z*5])
+      hole_h();
+    }
+    }
+  right_side();
+  mirror([1, 0, 0])
+  right_side();
 
+    top_holes();
+  }
+
+  difference() {
   shell();
+  shell_holes();
+  }
   // dovetail mount
   mount_height = wall;
   mount_width = outer_size.x - wall;
@@ -62,38 +114,33 @@ module tower(size) {
   minimalDistance = (23 - nodemcu_board.z - pins.z);
   offz = (size.z - nodemcu_bb.z)/2 - minimalDistance;
   pilarHeight = minimalDistance + pins.z;
-  echo(x=nodemcu_bb);
-  translate([0, off - wall - 15, -offz]) {
-    
+  pilarWidth = 5;
+  aboveBoard = nodemcu_board.z + 6;
+  
+  module support_pillar() {
+    cylinder(d=pilarWidth, h=pilarHeight, center=true);
+    translate([0, 0, aboveBoard]) cylinder(d=2.5, h=pilarHeight, center=true);
+  }
+      
+  translate([0, off - wall - 15, -offz-1]) {
     translate([0, 0, -pilarHeight/2]) {
-      pilarWidth = 5;
-      aboveBoard = nodemcu_board.z + 6;
       // now move to 'corners'
       translate([(-nodemcu_bb.y + pilarWidth)/2, (nodemcu_bb.x-pilarWidth)/2, 0]) {
-      cylinder(d=pilarWidth, h=pilarHeight, center=true);
-                      translate([0, 0, aboveBoard])
-      cylinder(d=2, h=pilarHeight, center=true);
+        support_pillar();
       }
       
-            translate([(nodemcu_bb.y - pilarWidth)/2, (nodemcu_bb.x-pilarWidth)/2, 0]) {
-      cylinder(d=pilarWidth, h=pilarHeight, center=true);
-                            translate([0, 0, aboveBoard])
-      cylinder(d=2, h=pilarHeight, center=true);
-            }
+      translate([(nodemcu_bb.y - pilarWidth)/2, (nodemcu_bb.x-pilarWidth)/2, 0]) {
+        support_pillar();
+      }
       
-            translate([(-nodemcu_bb.y + pilarWidth)/2, (-nodemcu_bb.x+pilarWidth)/2, 0]) {
-      cylinder(d=pilarWidth, h=pilarHeight, center=true);
-                            translate([0, 0, aboveBoard])
-      cylinder(d=2, h=pilarHeight, center=true);
-            }
+      translate([(-nodemcu_bb.y + pilarWidth)/2, (-nodemcu_bb.x+pilarWidth)/2, 0]) {
+        support_pillar();
+      }
       
-            translate([(nodemcu_bb.y - pilarWidth)/2, (-nodemcu_bb.x+pilarWidth)/2, 0]) {
-      cylinder(d=pilarWidth, h=pilarHeight, center=true);
-              translate([0, 0, aboveBoard])
-      cylinder(d=2, h=pilarHeight, center=true);
-            }
+      translate([(nodemcu_bb.y - pilarWidth)/2, (-nodemcu_bb.x+pilarWidth)/2, 0]) {
+        support_pillar();
+      }
     }
-  
   
     if (show_peripheral) {
     #rotate([0, 0, -90])
@@ -110,7 +157,7 @@ module tower(size) {
   // compensate +2 for wall size
   holder_size = 5+2;
   // ground floor for holders
-  translate([0, 0, holder_size/2 - size.z/2]) {
+  translate([0, 0, holder_size/2 - size.z/2-1]) {
     // Power cables
     translate([0, -25, 0])
     rotate([0, 0, 90])
@@ -119,22 +166,19 @@ module tower(size) {
     // 1/3 rings for sensor
     translate([0, -5, 0])
     rotate([0, 0, 90]) cable_holder([3, holder_size, holder_size]);
-    //2/3
-    translate([10, 5, 0])
-        rotate([0, 0, -45]) cable_holder([3, holder_size, holder_size]);
   }
   // and now sensor 'slide in'
   // TODO(m): hole dimension
   holder_height = 15;
-  translate([0, 22, (holder_height - size.z)/2])
+  translate([0, 22, (holder_height - size.z)/2 - 1])
   rotate([0, 90, 0]) {
     difference() 
     {
   // 2mm for 2x wall 3 for real hole size
   cable_holder([holder_height, 18, 2+3], wall=1);
       color("green")
-      translate([0, 6.5, -2])
-      cube([holder_height+1, 3, 2], center=true);
+      translate([0, 7, -2])
+      cube([holder_height+2, 8, 2], center=true);
       color("green")
       translate([0, -8.5, 0])
       cube([holder_height+1, 2, 3], center=true);
