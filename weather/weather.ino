@@ -1,3 +1,5 @@
+/* Remeber to connect D0 with RST
+ * Disconnect when flashing */
 #include <ESP8266WiFi.h> /* wifi */
 #include <Adafruit_BME280.h> /* include Adafruit library for BMP280 sensor */
 #include <WiFiUdp.h> /* UDP */
@@ -15,9 +17,8 @@ uint8_t replyPacket[REPLY_PACKET_SIZE];
 #define VOLT_THRESHOLD 2000
 /* Interval in us: 600s (10m) */
 #define W_REPORT_INTERVAL 600000000
-/* Interval in us: 60s (1m) */
-#define W_ERROR_SLEEP_INTERVAL 60000000
-
+/* Interval in us: 300s (5m) */
+#define W_ERROR_SLEEP_INTERVAL (300000000)
 
 #define UDP_PORT 9696
 
@@ -39,6 +40,16 @@ uint8_t replyPacket[REPLY_PACKET_SIZE];
 #define W_BLINK (0)
 
 #define W_NOOP do {} while(0)
+
+#if W_SILENT
+#define dprintln(...) W_NOOP
+#define dprintf(...) W_NOOP
+#define dprint(msg) W_NOOP
+#else
+#define dprintln(...) Serial.println(__VA_ARGS__)
+#define dprintf(...) Serial.printf(__VA_ARGS__)
+#define dprint(msg) Serial.print(msg)
+#endif
 
 #if W_BLINK
 void blink() {
@@ -79,28 +90,22 @@ void setupWiFi() {
 #endif
   }
   WiFi.begin(WIFI_NAME, WIFI_PASS);
-#if !W_SILENT
-  Serial.print("Connecting");
-#endif
+  dprint("Connecting");
   while (WiFi.status() != WL_CONNECTED) {
     delay(400);
-#if !W_SILENT
-    Serial.print(".");
-#endif
+    dprint(".");
     blink();
     
     if (++i >= W_WIFI_MAX_TRIES) {
-#if !W_SILENT
-      Serial.println("Wifi Failed. Emergency exit");
-#endif
+      dprintln("Wifi Failed. Emergency exit");
       exitError();
     }
   }
 #if !W_SILENT
-  Serial.println();
+  dprintln();
   
-  Serial.print("Connected, IP address: ");
-  Serial.println(WiFi.localIP());
+  dprint("Connected, IP address: ");
+  dprintln(WiFi.localIP());
 #endif
 }
 
@@ -173,10 +178,8 @@ void loop() {
 
   sendValues();
 
-#if !W_SILENT
   printValues();
-  Serial.println("going into deep sleep mode");
-#endif
+  dprintln("going into deep sleep mode");
 
   ESP.deepSleep(W_REPORT_INTERVAL);
   delay(100);
@@ -184,7 +187,6 @@ void loop() {
 
 void sendValues() {
   static union {
-    int32_t ival;
     uint32_t uval;
     float fval;
     byte bval[4];
@@ -231,11 +233,13 @@ void sendValues() {
   Udp.write(replyPacket, REPLY_PACKET_SIZE);
   Udp.endPacket();
   /* NOTE(m): Required to SEND data over networt */
-  delay(300);
-  yield();
+  delay(400);
 }
 
 #define SEALEVELPRESSURE_HPA (1013.25)
+#if W_SILENT
+#define printValues W_NOOP
+#else
 void printValues() {
   Serial.print("Temperature = ");
   Serial.print(bme.readTemperature());
@@ -260,3 +264,4 @@ void printValues() {
 
   Serial.println();
 }
+#endif
