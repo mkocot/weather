@@ -32,15 +32,12 @@
       data = JSON.parse(this.responseText);
       console.log("Data fetched");
       var augmented = [];
-      //roundAll(data[sensorid]["pres"]);
-      //roundAll(data[sensorid2]["pres"]);
-      //roundAll(data[sensorid]["temp"]);
-      //roundAll(data[sensorid2]["temp"]);
+      var width = window.innerWidth * 0.9 || 800;
       let opts = {
         title: "Temp [*C]",
         id: "chart1",
         class: "my-chart",
-        width: 800,
+        width: width,
         height: 200,
         series: [
           { value: "{YYYY}/{MM}/{DD} {HH}:{mm}:00" },
@@ -93,7 +90,6 @@
     };
     xmlhttp.open("GET", url, true);
     xmlhttp.send();
-    // <object id="asd" data="data.json" type="application/json" class="hidden" ></object>
   </script>
 </body>
 </html>
