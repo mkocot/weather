@@ -85,9 +85,7 @@ void setupWiFi() {
 
   /* assign static IP */
   if (!WiFi.config(W_WIFI_IP, W_WIFI_GATEWAY, W_WIFI_NETMASK)) {
-#if! W_SILENT
-    Serial.println("STA Failed to configure");
-#endif
+    dprintln("STA Failed to configure");
   }
   WiFi.begin(WIFI_NAME, WIFI_PASS);
   dprint("Connecting");
@@ -101,12 +99,12 @@ void setupWiFi() {
       exitError();
     }
   }
-#if !W_SILENT
+
   dprintln();
   
   dprint("Connected, IP address: ");
   dprintln(WiFi.localIP());
-#endif
+
 }
 
 void setupBME280() {
@@ -115,9 +113,7 @@ void setupBME280() {
   Wire.begin(4, 0); 
   int sesnor_ok = bme.begin(BME280_ADDRESS_ALTERNATE);
   if (!sesnor_ok) {
-#if !W_SILENT
-      Serial.println("Could not find a valid BME280 sensor, check wiring!");
-#endif
+      dprintln("Could not find a valid BME280 sensor, check wiring!");
       blink();
       exitError();
   }
@@ -237,31 +233,28 @@ void sendValues() {
 }
 
 #define SEALEVELPRESSURE_HPA (1013.25)
-#if W_SILENT
-#define printValues W_NOOP
-#else
+
 void printValues() {
-  Serial.print("Temperature = ");
-  Serial.print(bme.readTemperature());
-  Serial.println(" *C");
+  dprint("Temperature = ");
+  dprint(bme.readTemperature());
+  dprintln(" *C");
 
-  Serial.print("Pressure = ");
+  dprint("Pressure = ");
 
-  Serial.print(bme.readPressure() / 100.0F);
-  Serial.println(" hPa");
+  dprint(bme.readPressure() / 100.0F);
+  dprintln(" hPa");
 
-  Serial.print("Approx. Altitude = ");
-  Serial.print(bme.readAltitude(SEALEVELPRESSURE_HPA));
-  Serial.println(" m");
+  dprint("Approx. Altitude = ");
+  dprint(bme.readAltitude(SEALEVELPRESSURE_HPA));
+  dprintln(" m");
 
-  Serial.print("Humidity = ");
-  Serial.print(bme.readHumidity());
-  Serial.println(" %");
+  dprint("Humidity = ");
+  dprint(bme.readHumidity());
+  dprintln(" %");
   
-  Serial.print("inVolt = ");
-  Serial.print(inVolt);
-  Serial.println(" mV");
+  dprint("inVolt = ");
+  dprint(inVolt);
+  dprintln(" mV");
 
-  Serial.println();
+  dprintln();
 }
-#endif
