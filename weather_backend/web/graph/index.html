@@ -23,6 +23,28 @@
         }
       }, data);
     }
+    function absolute_humidity(t, p, h) {
+      // https://planetcalc.com/2167/
+      Rw = 461.52 // J/(kgK)
+      ew_t = 6.112*Math.exp((17.62*t)/(243.12+t))
+      f_p = 1.0016 + (3.15E-6*p)-(0.074/p)
+      A = h * f_p * ew_t
+      B = (Rw * (t+ 273.15))
+      return A/B
+    }
+    function dew_point(t, h) {
+      // https://en.wikipedia.org/wiki/Dew_point
+      a = 17.625
+      b = 243.04
+      F = a*t/(b + t) + Math.log(h)
+      return b*F / (a - F)
+    }
+    function zip(arrays) {
+      // https://stackoverflow.com/questions/4856717/javascript-equivalent-of-pythons-zip-function
+      return arrays[0].map(function(_,i){
+        return arrays.map(function(array){return array[i]})
+      });
+    }
     var xmlhttp = new XMLHttpRequest();
     var url = "data.json";
     xmlhttp.onreadystatechange = function() {
@@ -34,7 +56,7 @@
       var augmented = [];
       var width = window.innerWidth * 0.9 || 800;
       let opts = {
-        title: "Temp [*C]",
+        title: "Temp [°C]",
         id: "chart1",
         class: "my-chart",
         width: width,
@@ -49,7 +71,7 @@
 
             // in-legend display
             label: "Sensor 1",
-            value: (self, rawValue) => !rawValue && "??" || rawValue.toFixed(1) + "*C",
+            value: (self, rawValue) => !rawValue && "??" || rawValue.toFixed(1) + "°C",
 
             // series style
             stroke: "red",
@@ -60,7 +82,7 @@
             label: "Sensor 2",
             show: true,
             spanGaps: false,
-            value: (self, rawValue) => !rawValue && "??" || rawValue.toFixed(1) + "*C",
+            value: (self, rawValue) => !rawValue && "??" || rawValue.toFixed(1) + "°C",
           }
         ],
       };
@@ -73,6 +95,27 @@
       opts.series[1].stroke = "blue";
       opts.series[2].value = opts.series[1].value;
       var uplot = new uPlot(opts, [timepoints, data[sensorid]["hum"], data[sensorid2]["hum"]], document.body);
+
+      opts.title = "Absolute Humidity [g/m³]";
+      opts.series[1].fill = "rgba(0, 128, 128, 0.3)";
+      opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(1) + "g/m³";
+      opts.series[1].stroke = "rgb(0, 255, 255)";
+      opts.series[2].value = opts.series[1].value;
+
+      mapper = (x) => 1000 * absolute_humidity(x[0], x[1], x[2]);
+      humidifier = (x) => zip([data[x]["temp"], data[x]["pres"], data[x]["hum"]]).map(mapper)
+      var uplot = new uPlot(opts, [timepoints, humidifier(sensorid), humidifier(sensorid2)], document.body);
+
+      if (false) {
+        opts.title = "Dew point [°C]";
+        opts.series[1].fill = "rgba(255, 128, 128, 0.3)";
+        opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(3) + "°C";
+        opts.series[1].stroke = "green";
+        opts.series[2].value = opts.series[1].value;
+
+        dewpointer = (x) => zip([data[x]["temp"], data[x]["hum"]]).map((xx) => dew_point(xx[0], xx[1] * 0.01));
+        var uplot = new uPlot(opts, [timepoints, dewpointer(sensorid), dewpointer(sensorid2)], document.body);
+      }
 
       opts.title = "Pressure [hPa]";
       opts.series[1].fill = "rgba(0, 255, 255, 0.3)";
