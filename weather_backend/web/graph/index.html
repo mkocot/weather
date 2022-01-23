@@ -24,6 +24,9 @@
       }, data);
     }
     function absolute_humidity(t, p, h) {
+      if (!t || !p || !h) {
+        return null;
+      }
       // https://planetcalc.com/2167/
       Rw = 461.52 // J/(kgK)
       ew_t = 6.112*Math.exp((17.62*t)/(243.12+t))
@@ -33,6 +36,9 @@
       return A/B
     }
     function dew_point(t, h) {
+      if (!t || !h) {
+        return null;
+      }
       // https://en.wikipedia.org/wiki/Dew_point
       a = 17.625
       b = 243.04
