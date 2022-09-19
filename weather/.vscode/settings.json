@@ -1,0 +1,11 @@
+{
+    "files.associations": {
+        "tuple": "cpp",
+        "type_traits": "cpp",
+        "utility": "cpp",
+        "optional": "cpp",
+        "array": "cpp"
+    }
+    // "clang-tidy.lintOnSave": false,
+    // "C_Cpp.autocomplete": "Disabled"
+}
