@@ -164,72 +164,9 @@ x = mqtt.publish("sropic", "geyload")
 print(x)
 
 
-
 #st = ScreenThread()
 # st.start()
 # st.add_screen("e8db849381ec", ("10.0.0.28", 0))
-
-# MCAST_GRP = '239.87.84.82'  # (239.W.T.R)
-
-# host, port = cfg["bind"]["address"].split(":")
-# host = '0.0.0.0'
-# port = 6666
-# # host = ""
-# sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-# sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-# sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-# sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-# # sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b"enp6s0")
-# # host = ''
-# sock.bind((host, int(port)))
-# mreq = struct.pack("4sl", socket.inet_aton(MCAST_GRP), socket.INADDR_ANY)
-# sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-# while True:
-#     # Todo: add MAC
-#     # todo: add sensor number?
-#     logging.info("wait for data")
-#     data, addr = sock.recvfrom(1500)
-#     if len(data) != 32:
-#         print("OSS")
-
-#     df = protocol.parse(data)
-#     if not df.message_to_broker:
-#         continue
-
-#     sensorsnum = len(df.modules)
-#     sensors = {
-#         "rcvtime": datetime.datetime.utcnow().isoformat(),
-#         "raw": base64.b64encode(data).decode('ascii')
-#     }
-#     for sid in df.modules:
-#         module_name = stype2name.get(sid.MODULE_ID)
-#         if module_name:
-#             sensors[module_name] = sid.value
-#         if sid.MODULE_ID == protocol.ScreenSensor.MODULE_ID:
-#             st.add_screen(df.device_id, addr)
-#     as_json = json.dumps(sensors)
-#     if len(sensors) == 6:
-#         temp = sensors["temperature"]
-#         hum = sensors["humidity"]
-#         pres = sensors["pressure"] * 0.01  # scale Pa to hPa
-#         volt = sensors["volt"] * 0.001  # scale mV to V
-#         RRD.add(df.device_id, (temp, hum, pres, volt))
-#         mqtt.publish("sensor/" + df.device_id + "/temperature", temp)
-#         mqtt.publish("sensor/" + df.device_id + "/humidity", hum)
-#     elif len(sensors) == 3 and 'soil' in sensors:
-#         temp = 20 #sensors["temperature"]
-#         hum = sensors["soil"]
-#         pres = 1013 #sensors["pressure"] * 0.01  # scale Pa to hPa
-#         volt = 3.3#sensors["volt"] * 0.001  # scale mV to V
-#         RRD.add(df.device_id, (temp, hum, pres, volt))
-#         mqtt.publish("sensor/" + df.device_id + "/temperature", temp)
-#         mqtt.publish("sensor/" + df.device_id + "/humidity", hum)
-#     else:
-#         #
-#         continue
-#     sys.stdout.write(as_json)
-#     sys.stdout.write("\n")
-#     sys.stdout.flush()
 
 class WeatherProcessor:
     def process(self, data):
@@ -278,10 +215,10 @@ class WeatherProcessor:
             # mqtt.publish("sensor/" + df.device_id + "/temperature", temp)
             # mqtt.publish("sensor/" + df.device_id + "/humidity", hum)
         elif len(sensors) == 3 and 'soil' in sensors:
-            temp = 20 #sensors["temperature"]
+            temp = 20  # sensors["temperature"]
             hum = sensors["soil"]
-            pres = 1013 #sensors["pressure"] * 0.01  # scale Pa to hPa
-            volt = 3.3#sensors["volt"] * 0.001  # scale mV to V
+            pres = 1013  # sensors["pressure"] * 0.01  # scale Pa to hPa
+            volt = 3.3  # sensors["volt"] * 0.001  # scale mV to V
             RRD.add(df.device_id, (temp, hum, pres, volt))
             # mqtt.publish("sensor/" + df.device_id + "/temperature", temp)
             # mqtt.publish("sensor/" + df.device_id + "/humidity", hum)
@@ -292,6 +229,7 @@ class WeatherProcessor:
         sys.stdout.write("\n")
         sys.stdout.flush()
 
+
 class WeaterServerUARTProtocol(asyncio.Protocol):
     def __init__(self, emergency_stop, processor):
         self.emergency_stop = emergency_stop
@@ -301,20 +239,17 @@ class WeaterServerUARTProtocol(asyncio.Protocol):
     def connection_made(self, transport):
         self.transport = transport
         print('port opened', transport)
-        # transport.serial.rts = False
-        # transport.write(b'hello world\n')
 
     def data_received(self, data):
         self.cache.extend(data)
         line_end = b'\r\n'
         while True:
             head, sep, tail = self.cache.partition(line_end)
-            print(head, sep, tail)
             if not sep:
                 break
             self.cache = tail
 
-            line = data.decode('ascii')
+            line = head.decode('ascii')
             if not line or line[0] != "D":
                 continue
             line = line[1:]
@@ -325,13 +260,14 @@ class WeaterServerUARTProtocol(asyncio.Protocol):
                 continue
 
             expected_length = int(line[0:2], base=16)
-            data = line[2:]
+            hex_data = line[2:]
 
-            if len(data) != expected_length * 2:
-                print("data length missmatch", "got", len(data), "wanted", expected_length * 2)
+            if len(hex_data) != expected_length * 2:
+                print("data length missmatch", "got", len(
+                    hex_data), "wanted", expected_length * 2)
                 continue
             try:
-                decoded = bytes.fromhex(data)
+                decoded = bytes.fromhex(hex_data)
             except Exception:
                 print("unable to decoder serial")
                 pass
@@ -340,6 +276,7 @@ class WeaterServerUARTProtocol(asyncio.Protocol):
     def connection_lost(self, exc):
         print('port closed')
         self.emergency_stop.set_exception(exc)
+
 
 class WeaterServerProtocol(asyncio.DatagramProtocol):
     def __init__(self, emergency_stop, processor):
@@ -350,9 +287,7 @@ class WeaterServerProtocol(asyncio.DatagramProtocol):
         self.transport = transport
 
     def datagram_received(self, data, addr):
-        print("data reci")
         self.processor.process(data)
-        # self.transport.sendto(data, addr)
 
     def error_received(self, exc):
         """Called when a send or receive operation raises an OSError.
@@ -394,7 +329,10 @@ async def uart_receiver(patocol):
     loop = asyncio.get_event_loop()
     emergency_stop = loop.create_future()
     proto = WeaterServerUARTProtocol(emergency_stop, patocol)
-    coro = serial_asyncio.create_serial_connection(loop, lambda: proto, serial_dev, baudrate=serial_baud)
+    # soo there is some special options that should be enabled to
+    # make serial happy?
+    coro = serial_asyncio.create_serial_connection(
+        loop, lambda: proto, serial_dev, baudrate=serial_baud)
     transport, protocol = await coro
     await protocol.emergency_stop
     print("craptastykon")
@@ -409,7 +347,6 @@ async def main():
     # rsock, wsock = asyncio.create
     # create tasks
     # asyncio.seri
-    loop = asyncio.get_event_loop()
     proceessor = WeatherProcessor()
     udp_task = udp_receiver(proceessor)
     uart_task = uart_receiver(proceessor)
