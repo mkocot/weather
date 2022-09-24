@@ -158,11 +158,6 @@ class ScreenThread(Thread):
             self._lock.release()
 
 
-mqtt = Client("weather_backend")
-print(mqtt.connect("10.0.0.11"))
-mqtt.loop_start()
-x = mqtt.publish("sropic", "geyload")
-print(x)
 
 
 #st = ScreenThread()
@@ -336,7 +331,6 @@ async def uart_receiver(patocol):
         loop, lambda: proto, serial_dev, baudrate=serial_baud)
     transport, protocol = await coro
     await protocol.emergency_stop
-    print("craptastykon")
 
 
 async def screen_sender():
