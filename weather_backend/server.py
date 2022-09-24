@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 import bottle
-import os
 import time
 import fetch
 import json
@@ -11,9 +10,18 @@ from dbscan import dbscan
 def serve_static(name):
     return bottle.static_file(name, "web/graph")
 
+
 @bottle.get("/")
 def index():
     return bottle.static_file("index.html", "web/graph")
+
+
+@bottle.get("/data/<id>/last.json")
+def data_last(id: str):
+    rrd = fetch.RRD(".")
+    data = rrd.lastupdate(id)
+    return data
+
 
 @bottle.get("/data.json")
 def data():
@@ -23,7 +31,7 @@ def data():
     last = 0
     sensors = ["e09806259a66", "24a1603048ba"]
     for fn in sensors:
-        lu = rrd.lastupdate(fn)
+        lu = rrd.last(fn)
         if not lu:
             continue
         if not last:
@@ -66,7 +74,7 @@ def data():
                 data[i] = None
 
     # todo: time might diverge +/- one tick
-    #if time1 != time2:
+    # if time1 != time2:
     #    print(time1-time2, time2-time1)
     #    return bottle.HTTPResponse(status=500)
 

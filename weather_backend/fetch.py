@@ -1,11 +1,113 @@
 #!/usr/bin/env python3
 import subprocess
-import json
 import math
 from os import environ
 from os.path import join, exists
 
 TIME = 24 * 60 * 60
+
+
+class Gauge:
+    DS_NAME = None
+    DS_RANGE = (None, None)
+    DS_TIME = None
+
+    def __init__(self, value):
+        self.value = value
+
+    def __str__(self):
+        return str(self.value)
+
+    @classmethod
+    def template(cls):
+        if not cls.DS_NAME:
+            raise Exception("no DS_NAME")
+        if not cls.DS_TIME:
+            raise Exception("no DS_TIME")
+        if cls.DS_RANGE == (None, None):
+            raise Exception("no DS_RANGE")
+        return f"DS:{cls.DS_NAME}:GAUGE:{cls.DS_TIME}m:{cls.DS_RANGE[0]}:{cls.DS_RANGE[1]}"
+
+
+class Temp(Gauge):
+    DS_NAME = "temp"
+    DS_RANGE = (-30, 50)
+    DS_TIME = 20
+
+    def __init__(self, value):
+        super().__init__(value)
+
+
+class Humidity(Gauge):
+    DS_NAME = "hum"
+    DS_RANGE = (0, 100)
+    DS_TIME = 20
+
+    def __init__(self, value):
+        super().__init__(value)
+
+
+class Pres(Gauge):
+    DS_NAME = "pres"
+    DS_RANGE = (600, 1200)
+    DS_TIME = 20
+
+    def __init__(self, value):
+        super().__init__(value)
+
+
+class Volt(Gauge):
+    DS_NAME = "volt"
+    DS_RANGE = (0, 5)
+    DS_TIME = 20
+
+    def __init__(self, value):
+        super().__init__(value)
+
+
+class Iaq(Gauge):
+    DS_NAME = "iaq"
+    DS_RANGE = (0, 500)
+    DS_TIME = 20
+
+    def __init__(self, value):
+        super().__init__(value)
+
+
+class StaticIaq(Gauge):
+    DS_NAME = "siaq"
+    DS_RANGE = (0, 500)
+    DS_TIME = 20
+
+    def __init__(self, value):
+        super().__init__(value)
+
+
+class Co2(Gauge):
+    DS_NAME = "co2"
+    # 500 is real minimum
+    # max is ?
+    # >40,000 ppm 	Exposure may lead to serious oxygen deprivation resulting in permanent
+    # brain damage, coma, even death.
+    #
+    # soo 1_000_000 should be enough (pure co2)
+    DS_RANGE = (0, 1000000)
+    DS_TIME = 20
+
+    def __init__(self, value):
+        super().__init__(value)
+
+
+class GasResistance(Gauge):
+    DS_NAME = "gasr"
+    # 0 (but resistance 0 is unlikely)
+    # max is dunno assume 1G Ohm
+    DS_RANGE = (0, 1000000000)
+    DS_TIME = 20
+
+    def __init__(self, value):
+        super().__init__(value)
+
 
 class RRD:
     path = "."
@@ -18,64 +120,68 @@ class RRD:
     YEAR = 370 * DAY  # Yes, longer than 'real' year
 
     SAMPLES_Y = YEAR / STEP
-    def __init__(self, path:str = None):
+
+    KNOWN_GAUGES = {x.DS_NAME: x for x in (
+        Temp, Humidity, Pres, Volt, Iaq, StaticIaq, Co2, GasResistance)}
+
+    DEFAULT_GAUGES = (
+        Temp, Humidity, Pres, Volt
+    )
+
+    def __init__(self, path: str = None):
         self.path = path or self.path
+        self.cache = {}
 
     def _file_path(self, name):
         return join(self.path, self.SENSOR_N_TEMPLATE % name)
 
-    def _environ(self):
-        return dict(environ, LANG="C")
-
-    def lastupdate(self, name):
-        rrdfile = self._file_path(name)
-        proc = subprocess.Popen(["rrdtool", "lastupdate", rrdfile],
+    def _qx(self, args):
+        proc = subprocess.Popen(args,
                                 universal_newlines=True,
                                 stdout=subprocess.PIPE,
                                 stderr=subprocess.DEVNULL,
                                 env=self._environ())
         try:
             outs, _ = proc.communicate(timeout=10)
+            return (outs, True)
         except subprocess.TimeoutExpired:
             proc.kill()
             outs, _ = proc.communicate()
-        lines = outs.splitlines()
-        if not lines:
+            return (outs, False)
+
+    def _environ(self):
+        return dict(environ, LANG="C")
+
+    def last(self, name):
+        rrdfile = self._file_path(name)
+        out, ok = self._qx(["rrdtool", "last", rrdfile])
+        if not ok:
             return 0
-        fields = lines[-1].split()
-        if not fields[0].endswith(":"):
-            return 0
-        return int(fields[0][:-1])
+        return int(out)
 
-    def rrdfetch(self, name, start=TIME):
-        RRDFILE = join(self.path, self.SENSOR_N_TEMPLATE % name)
+    def add_ds(self, name, something):
+        rrdfile = self._file_path(name)
+        args = ["rrdtool", "tune", rrdfile]
+        for ds in something:
+            if ds.startswith("DS:"):
+                rrd_cmd = args + [ds]
+                outs, ok = self._qx(rrd_cmd)
+                if not ok:
+                    print("unable to execute", rrd_cmd)
 
-        # Order of date is equal to create
-        # temp
-        # hum
-        # pres
-        # volt
-        # function push(A,B) { A[length(A)+1] = B }
+    def tune(self, name, gauges):
+        # use tune to add/remove DS to existing file
+        # rrdtool tune my.rrd DS:ds_name:GAUGE:900:-50:100
 
-        # NOTE(m): We should ensure now from graph and now from fetch matches!
-        # Otherwises values will be shifted by one (in our case 10minutes)
-        proc = subprocess.Popen([
-            "rrdtool", "fetch", RRDFILE, "AVERAGE", "--start",
-            "now-%d" % start, "--end", "now"],
-            universal_newlines=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.DEVNULL,
-            env=self._environ())
-        try:
-            outs, _ = proc.communicate(timeout=10)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            outs, _ = proc.communicate()
+        rrdfile = self._file_path(name)
+        for g in gauges:
+            _, ok = self._qx(["rrdtool", "tune", rrdfile, g.template()])
+            if not ok:
+                raise Exception("unable to tune rrd")
 
+    def _parse(self, lines):
         data = {}
         index2name = {}
-        lines = outs.splitlines()
-        # remove nan at end
         while len(lines):
             split = lines[-1].split()
             if not all(x == "nan" for x in split[1:]):
@@ -92,7 +198,7 @@ class RRD:
                     data[name] = []
                 continue
 
-            timestamp = int(values[0][:-1]) 
+            timestamp = int(values[0][:-1])
             if "time" not in data:
                 data["time"] = []
             data["time"].append(timestamp)
@@ -103,34 +209,90 @@ class RRD:
                 data[n].append(v)
         return data
 
+    def lastupdate(self, name):
+        rrdfile = self._file_path(name)
+        outs, _ = self._qx(["rrdtool", "lastupdate", rrdfile])
+        return self._parse(outs.splitlines())
+        # remove nan at end
+
+    def rrdfetch(self, name, start=TIME):
+        RRDFILE = join(self.path, self.SENSOR_N_TEMPLATE % name)
+
+        # Order of date is equal to create
+        # temp
+        # hum
+        # pres
+        # volt
+        # function push(A,B) { A[length(A)+1] = B }
+
+        # NOTE(m): We should ensure now from graph and now from fetch matches!
+        # Otherwises values will be shifted by one (in our case 10minutes)
+        outs, _ = self._qx(["rrdtool", "fetch", RRDFILE, "AVERAGE",
+                           "--start", "now-%d" % start, "--end", "now"])
+        return self._parse(outs.splitlines())
+
+    def _default_gauges_templates(self):
+        return [x.template() for x in self.DEFAULT_GAUGES]
+
     def _create(self, name: str):
         rrd_file = self._file_path(name)
         if exists(rrd_file):
             return True
-        
+
         return subprocess.run([
-                "rrdtool",
-                "create",
-                rrd_file,
-                "--step",
-                str(self.STEP),
-                "--start",
-                str(self.START),
-                "DS:temp:GAUGE:20m:-30:50",
-                "DS:hum:GAUGE:20m:0:100",
-                "DS:pres:GAUGE:20m:600:1200",
-                "DS:volt:GAUGE:20m:0:5",
-                "RRA:AVERAGE:0.5:1:%d" %
-                self.SAMPLES_Y  # 1 YEAR by STEP Save 1 YEAR by STEP resolution
-            ],
-            env=self._environ())
+            "rrdtool",
+            "create",
+            rrd_file,
+            "--step",
+            str(self.STEP),
+            "--start",
+            str(self.START),
+            *self._default_gauges_templates(),
+            "RRA:AVERAGE:0.5:1:%d" %
+            self.SAMPLES_Y  # 1 YEAR by STEP Save 1 YEAR by STEP resolution
+        ], env=self._environ())
+
+    def get_rrd_structure(self, name: str):
+        if name in self.cache:
+            return self.cache[name]
+
+        rrd_file = self._file_path(name)
+        out, ok = self._qx([
+            "rrdtool", "info", rrd_file,
+        ])
+        if not ok:
+            raise Exception("bazinga")
+        desc = set()
+        for l in out.splitlines():
+            if not l.startswith("ds["):
+                continue
+            end_name = l.find("]")
+            name = l[3:end_name]
+            g = self.KNOWN_GAUGES.get(name)
+            if g is None:
+                raise Exception("invalid schema")
+            desc.add(g)
+        self.cache[name] = desc
+        return desc
 
     def add(self, name: str, data: tuple):
-        temp, hum, pres, volt = data
+        # temp, hum, pres, volt = data[0:4]
         rrd_file = self._file_path(name)
         if not self._create(name):
-            raise Exception("Unable to create storage for %s" % s)
+            raise Exception("Unable to create storage for %s" % name)
+        schema = self.get_rrd_structure(name)
+        # do we need tune it?
+        missing = set((x.__class__ for x in data)) - schema
+        if missing:
+            self.tune(name, missing)
+        # prepare template
+
+        template = ":".join((x.DS_NAME for x in data))
+        values = ":".join(("%f" % x.value for x in data))
+
         subprocess.run([
             "rrdtool", "update", rrd_file,
-            "N:%f:%f:%f:%f" % (temp, hum, pres, volt)
+            "--template", template,
+            "--",
+            f"N:{values}",
         ], env=self._environ())
