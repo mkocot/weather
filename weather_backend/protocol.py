@@ -169,9 +169,6 @@ class SoilMoistureSensor(SimpleFloat32):
 class TimeSensor(SimpleInt32):
     MODULE_ID = 0x4
 
-class SoilSensor(SimpleFloat32):
-    MODULE_ID = 0x09
-
 MODULES = [
     VoltSensor,
     TempSensor,
@@ -244,4 +241,3 @@ def parse(data: bytes):
     if sensors_num != 0:
         raise Exception("Missing data for %d modules" % sensors_num)
     return df
-

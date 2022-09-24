@@ -29,7 +29,8 @@ def data():
     resp = "{}"
     headers = dict()
     last = 0
-    sensors = ["e09806259a66", "24a1603048ba"]
+    # ec62609d4998 - outside
+    sensors = ["e09806259a66", "24a1603048ba", "ec62609d4998"]
     for fn in sensors:
         lu = rrd.last(fn)
         if not lu:

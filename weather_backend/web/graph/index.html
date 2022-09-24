@@ -72,7 +72,7 @@
       let graphs = [
         {
           title: "Temp [°C]",
-          fill: "rgba(255, 0, 0, 0.3)",
+          fill: "rgba(200, 0, 0, 0.3)",
           unit: "°C",
           stroke: "red",
           fetch: default_fetch("temp")
@@ -115,9 +115,9 @@
         },
         {
           title: "Bat [V]",
-          fill: "rgba(255, 0, 0, 0.3)",
+          fill: "rgba(128, 128, 128, 0.3)",
           unit: "V",
-          stroke: "red",
+          stroke: "gray",
           fetch: default_fetch("volt"),
           customize: (o) => {
             o.series[3].show = false;
