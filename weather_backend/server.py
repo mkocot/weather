@@ -15,6 +15,13 @@ def serve_static(name):
 def index():
     return bottle.static_file("index.html", "web/graph")
 
+@bottle.get("/api/<token>/last/<name>")
+def lastdata(name):
+    # if not name: [list?]
+    #rrd = fetch.RRD(".")
+    #last = rrd.lastupdate(name)
+    return bottle.HTTPResponse(status=404)
+
 @bottle.get("/data.json")
 def data():
     rrd = fetch.RRD(".")

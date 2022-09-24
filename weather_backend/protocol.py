@@ -111,6 +111,12 @@ class ImagePush(BaseModule):
 class TimeSensor(SimpleInt32):
     MODULE_ID =  0x4
 
+class GasSensor(SimpleFloat32):
+    MODULE_ID = 0x08
+
+class SoilSensor(SimpleFloat32):
+    MODULE_ID = 0x09
+
 MODULES = [
     VoltSensor,
     TempSensor,
@@ -118,7 +124,9 @@ MODULES = [
     PressureSensor,
     ScreenSensor,
     ImagePush,
-    TimeSensor
+    TimeSensor,
+    GasSensor,
+    SoilSensor
 ]
 
 _ID_TO_MODULE = {m.MODULE_ID:m for m in MODULES}

@@ -29,6 +29,8 @@ class RRD:
 
     def lastupdate(self, name):
         rrdfile = self._file_path(name)
+        # TODO(m): Replace with last, we only need timestamp
+        # ant this method should fetch last values too
         proc = subprocess.Popen(["rrdtool", "lastupdate", rrdfile],
                                 universal_newlines=True,
                                 stdout=subprocess.PIPE,
