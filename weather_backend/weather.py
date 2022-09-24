@@ -145,6 +145,7 @@ class ScreenThread(Thread):
                 d.state = 0
 
     def add_screen(self, id, addr, timeout=120):
+        # TODO: sensor 1 and sensor 2 is swapend on scrren vs web
         try:
             self._lock.acquire(blocking=True, timeout=2)
             screen = self._screens.get(id)
