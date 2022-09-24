@@ -16,6 +16,7 @@
     var data = {};
     var sensorid = "e09806259a66";
     var sensorid2 = "24a1603048ba";
+    var sensoridOut = "ec62609d4998";
     function roundAll(data) {
       data.forEach(function (v, i) {
         if (v > 0) {
@@ -61,6 +62,68 @@
       console.log("Data fetched");
       var augmented = [];
       var width = window.innerWidth * 0.9 || 800;
+      var timepoints = data["time"];
+      let default_fetch = (key) => {
+      return () => [timepoints,
+	      data[sensorid][key],
+	      data[sensorid2][key],
+	      data[sensoridOut][key]];
+};
+      let graphs = [
+        {
+          title: "Temp [°C]",
+          fill: "rgba(255, 0, 0, 0.3)",
+          unit: "°C",
+          stroke: "red",
+          fetch: default_fetch("temp")
+        },
+        //{
+        //  title: "Dew point [°C]",
+        //  fill: "rgba(255, 128, 128, 0.3)",
+        //  unit: "°C",
+        //  stroke: "green",
+        //  fetch: () => {
+        //    dewpointer = (x) => zip([data[x]["temp"], data[x]["hum"]]).map((xx) => dew_point(xx[0], xx[1] * 0.01));
+        //    return [timepoints, dewpointer(sensorid), dewpointer(sensorid2), dewpointer(sensoridOut)];
+        //  },
+        //  customize: (o) => { o.series[3].show = true; }
+        //},
+        {
+          title: "Humidity [%]",
+          fill: "rgba(0, 0, 255, 0.3)",
+          unit: "%",
+          stroke: "blue",
+          fetch: default_fetch("hum")
+        },
+        {
+          title: "Absolute Humidity [g/m³]",
+          fill: "rgba(0, 128, 128, 0.3)",
+          unit: "g/m³",
+          stroke: "rgb(0, 255, 255)",
+          fetch: () => {
+	    mapper = (x) => 1000 * absolute_humidity(x[0], x[1], x[2]);
+	    humidifier = (x) => zip([data[x]["temp"], data[x]["pres"], data[x]["hum"]]).map(mapper);
+	    return [timepoints, humidifier(sensorid), humidifier(sensorid2), humidifier(sensoridOut)];
+	  }
+        },
+        {
+          title: "Pressure [hPa]",
+          fill: "rgba(0, 255, 255, 0.3)",
+          unit: "hPa",
+          stroke: "purple",
+          fetch: default_fetch("pres")
+        },
+        {
+          title: "Bat [V]",
+          fill: "rgba(255, 0, 0, 0.3)",
+          unit: "V",
+          stroke: "red",
+          fetch: default_fetch("volt"),
+          customize: (o) => {
+            o.series[3].show = false;
+	  }
+        }
+      ];
       let opts = {
         title: "Temp [°C]",
         id: "chart1",
@@ -88,54 +151,30 @@
             label: "Sensor 2",
             show: true,
             spanGaps: false,
-            value: (self, rawValue) => !rawValue && "??" || rawValue.toFixed(1) + "°C",
+            value: (self, rawValue) => self.series[1].value(self, rawValue),
+            fill: (self, idx) => {return self.series[1].fill},
+          },
+          {
+            label: "Sensor O",
+            show: true,
+            spanGaps: true,
+            value: (self, rawValue) => self.series[1].value(self, rawValue),
+            fill: (self, idx) => {return self.series[1].fill},
           }
         ],
       };
-      var timepoints = data["time"];
-      var uplot = new uPlot(opts, [timepoints, data[sensorid]["temp"], data[sensorid2]["temp"]], document.body);
+      graphs.forEach((cfg) => {
+        series_data_f = cfg.fetch || default_fetch;
+        series_data = series_data_f()
 
-      opts.title = "Humidity [%]";
-      opts.series[1].fill = "rgba(0, 0, 255, 0.3)";
-      opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(0) + "%";
-      opts.series[1].stroke = "blue";
-      opts.series[2].value = opts.series[1].value;
-      var uplot = new uPlot(opts, [timepoints, data[sensorid]["hum"], data[sensorid2]["hum"]], document.body);
 
-      opts.title = "Absolute Humidity [g/m³]";
-      opts.series[1].fill = "rgba(0, 128, 128, 0.3)";
-      opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(1) + "g/m³";
-      opts.series[1].stroke = "rgb(0, 255, 255)";
-      opts.series[2].value = opts.series[1].value;
-
-      mapper = (x) => 1000 * absolute_humidity(x[0], x[1], x[2]);
-      humidifier = (x) => zip([data[x]["temp"], data[x]["pres"], data[x]["hum"]]).map(mapper)
-      var uplot = new uPlot(opts, [timepoints, humidifier(sensorid), humidifier(sensorid2)], document.body);
-
-      if (false) {
-        opts.title = "Dew point [°C]";
-        opts.series[1].fill = "rgba(255, 128, 128, 0.3)";
-        opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(3) + "°C";
-        opts.series[1].stroke = "green";
-        opts.series[2].value = opts.series[1].value;
-
-        dewpointer = (x) => zip([data[x]["temp"], data[x]["hum"]]).map((xx) => dew_point(xx[0], xx[1] * 0.01));
-        var uplot = new uPlot(opts, [timepoints, dewpointer(sensorid), dewpointer(sensorid2)], document.body);
-      }
-
-      opts.title = "Pressure [hPa]";
-      opts.series[1].fill = "rgba(0, 255, 255, 0.3)";
-      opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(0) + "hPa";
-      opts.series[1].stroke = "purple";
-      opts.series[2].value = opts.series[1].value;
-      var uplot = new uPlot(opts, [timepoints, data[sensorid]["pres"], data[sensorid2]["pres"]], document.body);
-
-      opts.title = "Bat [V]";
-      opts.series[1].fill = "rgba(255, 0, 0, 0.3)";
-      opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(3) + "V";
-      opts.series[1].stroke = "red";
-      opts.series[2].value = opts.series[1].value;
-      var uplot = new uPlot(opts, [timepoints, data[sensorid]["volt"], data[sensorid2]["volt"]], document.body);
+        opts.title = cfg.title;
+        opts.series[1].fill = cfg.fill;
+        opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(0) + cfg.unit;
+        opts.series[1].stroke = cfg.stroke;
+        cfg.customize && cfg.customize(opts);
+        var uplot = new uPlot(opts, series_data, document.body);
+      })
     };
     xmlhttp.open("GET", url, true);
     xmlhttp.send();
