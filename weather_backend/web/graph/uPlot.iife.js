@@ -839,7 +839,9 @@ var uPlot = (function () {
 	const aa      = "{aa}";
 	const hmm     = "{h}:{mm}";
 	const hmmaa   = hmm + aa;
+	const HHmm    = "{HH}:{mm}";
 	const NLhmmaa = NL + hmmaa;
+	const NLHHmm  = NL + HHmm;
 	const ss      = ":{ss}";
 
 	const _ = null;
@@ -913,10 +915,10 @@ var uPlot = (function () {
 			[y,           yyyy,            _,                      _,      _,                    _,      _,        _,       1],
 			[d * 28,      "{MMM}",         NLyyyy,                 _,      _,                    _,      _,        _,       1],
 			[d,           md,              NLyyyy,                 _,      _,                    _,      _,        _,       1],
-			[h,           "{h}" + aa,      NLmdyy,                 _,      NLmd,                 _,      _,        _,       1],
-			[m,           hmmaa,           NLmdyy,                 _,      NLmd,                 _,      _,        _,       1],
-			[s,           ss,              NLmdyy + " " + hmmaa,   _,      NLmd + " " + hmmaa,   _,      NLhmmaa,  _,       1],
-			[ms,          ss + ".{fff}",   NLmdyy + " " + hmmaa,   _,      NLmd + " " + hmmaa,   _,      NLhmmaa,  _,       1],
+			[h,           "{HH}",          NLmdyy,                 _,      NLmd,                 _,      _,        _,       1],
+			[m,           HHmm,            NLmdyy,                 _,      NLmd,                 _,      _,        _,       1],
+			[s,           ss,              NLmdyy + " " + HHmm,    _,      NLmd + " " + HHmm,    _,      NLHHmm,   _,       1],
+			[ms,          ss + ".{fff}",   NLmdyy + " " + HHmm,    _,      NLmd + " " + HHmm,    _,      NLHHmm,   _,       1],
 		];
 
 		// the ensures that axis ticks, values & grid are aligned to logical temporal breakpoints and not an arbitrary timestamp
