@@ -75,7 +75,8 @@
           fill: "rgba(200, 0, 0, 0.3)",
           unit: "°C",
           stroke: "red",
-          fetch: default_fetch("temp")
+          fetch: default_fetch("temp"),
+          resolution: 1
         },
         //{
         //  title: "Dew point [°C]",
@@ -167,10 +168,10 @@
         series_data_f = cfg.fetch || default_fetch;
         series_data = series_data_f()
 
-
+        let resolution = cfg.resolution || 0;
         opts.title = cfg.title;
         opts.series[1].fill = cfg.fill;
-        opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(0) + cfg.unit;
+        opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(resolution) + cfg.unit;
         opts.series[1].stroke = cfg.stroke;
         cfg.customize && cfg.customize(opts);
         var uplot = new uPlot(opts, series_data, document.body);
