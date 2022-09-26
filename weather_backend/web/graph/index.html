@@ -5,7 +5,7 @@
   <meta charset="utf-8">
   <link rel="stylesheet" href="uPlot.min.css">
   <meta http-equiv="refresh" content="300" />
-  <title>Weather station v0.0.1</title>
+  <title>Weather station v0.0.2</title>
 </head>
 
 <body>
@@ -70,7 +70,7 @@
 	      data[sensorid][key],
 	      data[sensorid2][key],
 	      data[sensoridOut][key]];
-};
+      };
       let graphs = [
         {
           title: "Temp [°C]",
@@ -118,13 +118,26 @@
         },
         {
           title: "Bat [V]",
-          fill: "rgba(128, 128, 128, 0.3)",
+          fill: "rgba(128, 64, 64, 0.3)",
           unit: "V",
           stroke: "gray",
           fetch: default_fetch("volt"),
           customize: (o) => {
-            o.series[3].show = false;
-	  }
+            o.series.splice(3, 1);
+	        }
+        },
+        {
+          title: "Air Quality Index",
+          fill: "rgba(64, 64, 64, 0.3)",
+          unit: "",
+          stroke: "navy",
+          fetch: () => [timepoints, data[sensoridOut]["siaq"], 
+           data[sensoridOut]["iaq"],    data[sensoridOut]["iaq"]],
+          customize: (o) => {
+            o.series[1].label = "Static IAQ";
+            o.series[2].label = "IAQ";
+            o.series.splice(3, 1);
+          }
         }
       ];
       let opts = {
@@ -133,6 +146,12 @@
         class: "my-chart",
         width: width,
         height: 200,
+        scales: {
+          "V": {
+            auto: false,
+            range: [1.5, 3]
+          }
+        },
         series: [
           { value: "{YYYY}/{MM}/{DD} {HH}:{mm}:00" },
           {
@@ -143,6 +162,7 @@
 
             // in-legend display
             label: "Sensor 1",
+            stroke: "black",
 
             // series style
            // stroke: "red",
@@ -151,6 +171,7 @@
             label: "Sensor 2",
             show: true,
             spanGaps: false,
+            stroke: "gray",
             value: (self, rawValue) => self.series[1].value(self, rawValue),
             fill: (self, idx) => {return self.series[1].fill},
           },
@@ -158,6 +179,7 @@
             label: "Sensor O",
             show: true,
             spanGaps: true,
+            stroke: "brown",
             value: (self, rawValue) => self.series[1].value(self, rawValue),
             fill: (self, idx) => {return self.series[1].fill},
           }
@@ -167,11 +189,24 @@
         series_data = cfg.fetch();
 
         let resolution = cfg.resolution || 0;
-        opts.title = cfg.title;
-        opts.series[1].fill = cfg.fill;
-        opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(resolution) + cfg.unit;
-        cfg.customize && cfg.customize(opts);
-        var uplot = new uPlot(opts, series_data, document.body);
+        copts = {...opts};
+        copts.title = cfg.title;
+        copts.series.forEach((x, idx) => {
+          // ignore time series
+          if (idx == 0) {
+            return;
+          }
+          x.fill = cfg.fill;
+          // that's should be default but somehow isn't
+          //x.stroke = "black";
+          // addig "scale" prop will remove axis values on the left
+          //if (cfg.title == "Bat [V]") {
+          //  x.scale = "V";
+          //}
+        });
+        copts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(resolution) + cfg.unit;
+        cfg.customize && cfg.customize(copts);
+        var uplot = new uPlot(copts, series_data, document.body);
       })
     };
     xmlhttp.open("GET", url, true);

@@ -3,7 +3,6 @@ import bottle
 import time
 import fetch
 import json
-from dbscan import dbscan
 
 
 @bottle.get("/<name>")
@@ -32,13 +31,6 @@ def filter_data(data):
     modules.discard("time")
     for m in modules:
         values = data[m]
-        if m == "volt":
-            eps = 0.01
-        else:
-            eps = 2
-        outliers = dbscan(values, eps, 3)
-        for i in outliers:
-            values[i] = None
         # create fake values
         for i in range(len(values)):
             if values[i]:

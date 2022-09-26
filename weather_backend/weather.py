@@ -175,10 +175,8 @@ class WeatherProcessor:
         if not df.message_to_broker:
             return
 
-        sensorsnum = len(df.modules)
         sensors = {
             "rcvtime": datetime.datetime.utcnow().isoformat(),
-            "raw": base64.b64encode(data).decode('ascii')
         }
         for sid in df.modules:
             module_name = stype2name.get(sid.MODULE_ID)
