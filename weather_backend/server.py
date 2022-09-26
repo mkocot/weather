@@ -23,6 +23,48 @@ def data_last(id: str):
     return data
 
 
+def lerp(a, b, t):
+    return (1 - t) * a + t * b
+
+
+def filter_data(data):
+    modules = set(data.keys())
+    modules.discard("time")
+    for m in modules:
+        values = data[m]
+        if m == "volt":
+            eps = 0.01
+        else:
+            eps = 2
+        outliers = dbscan(values, eps, 3)
+        for i in outliers:
+            values[i] = None
+        # create fake values
+        for i in range(len(values)):
+            if values[i]:
+                continue
+            # ok we got datapoint without value
+            if i > 0:
+                first_point = values[i - 1]
+            else:
+                # first datapoint without value, this is bad
+                continue
+            segments = 2
+            next_value = None
+            for j in range(i + 1, len(values)):
+                next_value = values[j]
+                if next_value:
+                    break
+                segments += 1
+            if not next_value:
+                # no more valid point after index 'i'
+                break
+            # lerp values
+            values[i] = lerp(first_point, next_value, 1.0 / segments)
+
+    return data
+
+
 @bottle.get("/data.json")
 def data():
     rrd = fetch.RRD(".")
@@ -48,37 +90,33 @@ def data():
         headers['Date'] = time.strftime("%a, %d %b %Y %H:%M:%S GMT",
                                         time.gmtime())
         return bottle.HTTPResponse(status=304, **headers)
+
     resp = {}
-    # ensure we match readouts
-    for fn in sensors:
-        data = rrd.rrdfetch(fn)
+    for s in sensors:
+        data = rrd.rrdfetch(s)
         if "time" not in data:
-            data["time"] = [int(time.time())]
-        if "time" not in resp:
-            resp["time"] = data["time"]
-        resp[fn] = data
-    # does time diverge?
-    time1 = set(resp[sensors[0]]["time"])
-    time2 = set(resp[sensors[1]]["time"])
-    for fn in sensors:
-        sensordata = resp[fn]
-        sensordata.pop("time")
-        # Remove outliers
-        for name in sensordata.keys():
-            data = sensordata[name]
-            if name == "volt":
-                eps = 0.01
-            else:
-                eps = 2
-            outliers = dbscan(data, eps, 3)
-            for i in outliers:
-                data[i] = None
+            now = int(time.time())
+            data["time"] = [now - 600, now]
+        time_slots = data.pop("time")
+        data = filter_data(data)
+        tick = time_slots[1] - time_slots[0]
 
-    # todo: time might diverge +/- one tick
-    # if time1 != time2:
-    #    print(time1-time2, time2-time1)
-    #    return bottle.HTTPResponse(status=500)
+        data["clock"] = {
+            "tick": tick,
+            "start": time_slots[0],
+            "count": len(time_slots),
+        }
 
+        resp[s] = data
+    # debug compare clocks
+    clock_data = None
+    for s in sensors:
+        if not clock_data:
+            clock_data = resp[s]["clock"]
+            continue
+        if clock_data != resp[s]["clock"]:
+            print("diff", s, clock_data, resp[s]["clock"])
+    resp["clock"] = clock_data
     resp = json.dumps(resp).encode("utf-8")
     headers['Content-Length'] = len(resp)
     return bottle.HTTPResponse(resp, **headers)

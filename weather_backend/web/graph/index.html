@@ -17,13 +17,7 @@
     var sensorid = "e09806259a66";
     var sensorid2 = "24a1603048ba";
     var sensoridOut = "ec62609d4998";
-    function roundAll(data) {
-      data.forEach(function (v, i) {
-        if (v > 0) {
-          this[i] = Math.round(v);
-        }
-      }, data);
-    }
+
     function absolute_humidity(t, p, h) {
       if (!t || !p || !h) {
         return null;
@@ -52,6 +46,14 @@
         return arrays.map(function(array){return array[i]})
       });
     }
+    function create_timepoints(_data) {
+      // check for 
+      var timepoints = new Array(_data.clock.count);
+      for (i = 0; i < _data.clock.count; ++i) {
+        timepoints[i] = (_data.clock.start + _data.clock.tick * i);
+      }
+      return timepoints;
+    }
     var xmlhttp = new XMLHttpRequest();
     var url = "data.json";
     xmlhttp.onreadystatechange = function() {
@@ -62,7 +64,7 @@
       console.log("Data fetched");
       var augmented = [];
       var width = window.innerWidth * 0.9 || 800;
-      var timepoints = data["time"];
+      var timepoints = create_timepoints(data);
       let default_fetch = (key) => {
       return () => [timepoints,
 	      data[sensorid][key],
@@ -102,10 +104,10 @@
           unit: "g/m³",
           stroke: "rgb(0, 255, 255)",
           fetch: () => {
-	    mapper = (x) => 1000 * absolute_humidity(x[0], x[1], x[2]);
-	    humidifier = (x) => zip([data[x]["temp"], data[x]["pres"], data[x]["hum"]]).map(mapper);
-	    return [timepoints, humidifier(sensorid), humidifier(sensorid2), humidifier(sensoridOut)];
-	  }
+	          mapper = (x) => 1000 * absolute_humidity(x[0], x[1], x[2]);
+      	    humidifier = (x) => zip([data[x]["temp"], data[x]["pres"], data[x]["hum"]]).map(mapper);
+	          return [timepoints, humidifier(sensorid), humidifier(sensorid2), humidifier(sensoridOut)];
+	        }
         },
         {
           title: "Pressure [hPa]",
@@ -141,12 +143,9 @@
 
             // in-legend display
             label: "Sensor 1",
-            value: (self, rawValue) => !rawValue && "??" || rawValue.toFixed(1) + "°C",
 
             // series style
-            stroke: "red",
-            width: 1,
-            fill: "rgba(255, 0, 0, 0.3)",
+           // stroke: "red",
           },
           {
             label: "Sensor 2",
@@ -165,14 +164,12 @@
         ],
       };
       graphs.forEach((cfg) => {
-        series_data_f = cfg.fetch || default_fetch;
-        series_data = series_data_f()
+        series_data = cfg.fetch();
 
         let resolution = cfg.resolution || 0;
         opts.title = cfg.title;
         opts.series[1].fill = cfg.fill;
         opts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(resolution) + cfg.unit;
-        opts.series[1].stroke = cfg.stroke;
         cfg.customize && cfg.customize(opts);
         var uplot = new uPlot(opts, series_data, document.body);
       })
