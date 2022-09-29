@@ -5,10 +5,8 @@ import json
 import sys
 import logging
 import datetime
-import base64
 from os.path import exists, isdir
 from os import mkdir
-from threading import Lock, Thread, Event
 import time
 import fetch
 import draw
@@ -26,12 +24,14 @@ import serial_asyncio
 
 
 stype2name = {
-    TempSensor.MODULE_ID: "temperature",
-    PressureSensor.MODULE_ID: "pressure",
-    HumiditySensor.MODULE_ID: "humidity",
-    VoltSensor.MODULE_ID: "volt",
-    SoilMoistureSensor.MODULE_ID: "soil",
-    VOCSensor.MODULE_ID: "voc",
+    TempSensor.MODULE_ID: ("temperature", fetch.Temp),
+    # scale Pa to hPa
+    PressureSensor.MODULE_ID: ("pressure", lambda v: fetch.Pres(v * 0.01)),
+    HumiditySensor.MODULE_ID: ("humidity", fetch.Humidity),
+    # scale mV to V
+    VoltSensor.MODULE_ID: ("volt", lambda v: fetch.Volt(v * 0.001)),
+    SoilMoistureSensor.MODULE_ID: ("soil", fetch.Humidity),
+    VOCSensor.MODULE_ID: ("voc", None),
 }
 
 logging.basicConfig(format='%(asctime)s %(message)s')
@@ -57,32 +57,28 @@ class ScreenInfo:
         self.addr = 'localhost'
 
 
-class ScreenThread(Thread):
-    _done = Event()
-    _lock = Lock()
+class ScreenThread:
+    _lock = asyncio.Lock()
     _screens = {}
     _rrd = RRD
+    _keep_looping = True
 
-    def __init__(self):
-        super().__init__()
-        self.setDaemon(True)
+    def __init__(self, sock):
+        self.sock = sock
 
-    def run(self):
-        while self._done.isSet:
-            self._loop()
-            self._done.wait(1)
+    async def run(self):
+        while self._keep_looping:
+            await self._loop()
+            await asyncio.sleep(1)
 
-    def _loop(self):
+    async def _loop(self):
         now = time.time()
-        try:
-            self._lock.acquire(blocking=True)
+        async with self._lock:
             devices = list(self._screens.keys())
             for d in devices:
                 if self._screens[d].deadline < now:
                     del self._screens[d]
             devices = self._screens.copy()
-        finally:
-            self._lock.release()
 
         # generate images
         for did, d in devices.items():
@@ -102,7 +98,7 @@ class ScreenThread(Thread):
             selected_sensor = sensors[sensor_id]
             name = cfg["device"][sensor_id]["name"]
             # get data from last 8 hours
-            raw_data = self._rrd.rrdfetch(sensor_id, start=8*60*60)
+            raw_data = self._rrd.rrdfetch(sensor_id, start=8 * 60 * 60)
             # states
             # 0 -> overview
             # 1 -> temperature graph
@@ -120,7 +116,7 @@ class ScreenThread(Thread):
             if d.state == 0:
                 image = draw.draw_overview(name, temp=temp[-1], hum=hum[-1],
                                            press=press[-1], volt=volt[-1],
-                                           time=raw_data["time"][len(temp)-1])
+                                           time=raw_data["time"][len(temp) - 1])
             elif d.state == 1:
                 image = draw.draw_graph("Temp", name, temp)
             elif d.state == 2:
@@ -138,34 +134,39 @@ class ScreenThread(Thread):
                 protocol.ImagePush(128, 32, image)
             ]
             data = protocol.serialize(df)
-            sock.sendto(data, (d.addr, 9696))
+            self.sock.sendto(data, (d.addr, 9696))
             d.state += 1
             if d.state > 4:
                 d.sensor_idx += 1
                 d.state = 0
 
-    def add_screen(self, id, addr, timeout=120):
+    async def add_screen(self, id, addr, timeout=120):
         # TODO: sensor 1 and sensor 2 is swapend on scrren vs web
-        try:
-            self._lock.acquire(blocking=True, timeout=2)
+        # TODO: async with is without timeout  (2 secs)
+        async with self._lock:
             screen = self._screens.get(id)
             if not screen:
                 screen = ScreenInfo()
                 self._screens[id] = screen
             screen.deadline = time.time() + timeout
             screen.addr = addr[0]
-        finally:
-            self._lock.release()
 
+DEBUG = False
 
-
-
-#st = ScreenThread()
+# st = ScreenThread()
 # st.start()
 # st.add_screen("e8db849381ec", ("10.0.0.28", 0))
-
+class WOutEncoder(json.JSONEncoder):
+    def default(self, o):
+        if hasattr(o, "value"):
+            return o.value
+        raise Exception("boom")
 class WeatherProcessor:
-    def process(self, data):
+    def __init__(self, sock):
+        self.sock = sock
+        self.st = ScreenThread(self.sock)
+
+    async def process(self, data, *, addr=None):
         try:
             df = protocol.parse(data)
         except Exception as e:
@@ -175,53 +176,34 @@ class WeatherProcessor:
         if not df.message_to_broker:
             return
 
-        sensors = {
-            "rcvtime": datetime.datetime.utcnow().isoformat(),
-        }
+        rcvtime = datetime.datetime.utcnow().isoformat()
+        sensors = {}
+
+        # NOTE(m): We could just use set of sensors values converted to
+        # RRD types not dict of names
         for sid in df.modules:
-            module_name = stype2name.get(sid.MODULE_ID)
-            if module_name == "voc":
-                sensors["iaq_static"] = sid.iaq_static
-                sensors["iaq"] = sid.iaq
-                sensors["co2"] = sid.co2
-            elif module_name:
-                sensors[module_name] = sid.value
+            module_name, converter = stype2name.get(sid.MODULE_ID)
             if sid.MODULE_ID == protocol.ScreenSensor.MODULE_ID:
-                st.add_screen(df.device_id, addr)
-        as_json = json.dumps(sensors)
-        if len(sensors) == 9:
-            temp = fetch.Temp(sensors["temperature"])
-            hum = fetch.Humidity(sensors["humidity"])
-            pres = fetch.Pres(sensors["pressure"] * 0.01)  # scale Pa to hPa
-            volt = fetch.Volt(sensors["volt"] * 0.001)  # scale mV to V
-            iaq = fetch.Iaq(sensors["iaq"])
-            iaq_static = fetch.StaticIaq(sensors["iaq_static"])
-            co2 = fetch.Co2(sensors["co2"])
-            RRD.add(df.device_id, (temp, hum, pres, volt, iaq, iaq_static, co2))
-            # mqtt.publish("sensor/" + df.device_id + "/temperature", temp)
-            # mqtt.publish("sensor/" + df.device_id + "/humidity", hum)
-        if len(sensors) == 6:
-            temp = fetch.Temp(sensors["temperature"])
-            hum = fetch.Humidity(sensors["humidity"])
-            pres = fetch.Pres(sensors["pressure"] * 0.01)  # scale Pa to hPa
-            volt = fetch.Volt(sensors["volt"] * 0.001)  # scale mV to V
-            RRD.add(df.device_id, (temp, hum, pres, volt))
-            # mqtt.publish("sensor/" + df.device_id + "/temperature", temp)
-            # mqtt.publish("sensor/" + df.device_id + "/humidity", hum)
-        elif len(sensors) == 3 and 'soil' in sensors:
-            temp = 20  # sensors["temperature"]
-            hum = sensors["soil"]
-            pres = 1013  # sensors["pressure"] * 0.01  # scale Pa to hPa
-            volt = 3.3  # sensors["volt"] * 0.001  # scale mV to V
-            RRD.add(df.device_id, (temp, hum, pres, volt))
-            # mqtt.publish("sensor/" + df.device_id + "/temperature", temp)
-            # mqtt.publish("sensor/" + df.device_id + "/humidity", hum)
-        else:
-            #
-            return
-        sys.stdout.write(as_json)
-        sys.stdout.write("\n")
-        sys.stdout.flush()
+                await self.st.add_screen(df.device_id, addr)
+                continue
+
+            if module_name == "voc":
+                sensors["iaq_static"] = fetch.StaticIaq(sid.iaq_static)
+                sensors["iaq"] = fetch.Iaq(sid.iaq)
+                sensors["co2"] = fetch.Co2(sid.co2)
+            elif module_name:
+                sensors[module_name] = converter(sid.value)
+            else:
+                print(f"Unknown module: {sid.MODULE_ID}")
+
+        await RRD.add(df.device_id, sensors.values())
+        if DEBUG:
+            sensors["rcvtime"] = rcvtime
+            as_json = json.dumps(sensors, cls=WOutEncoder)
+
+            sys.stdout.write(as_json)
+            sys.stdout.write("\n")
+            sys.stdout.flush()
 
 
 class WeaterServerUARTProtocol(asyncio.Protocol):
@@ -236,7 +218,7 @@ class WeaterServerUARTProtocol(asyncio.Protocol):
 
     def data_received(self, data):
         self.cache.extend(data)
-        line_end = b'\r\n'
+        line_end = b'\n'
         while True:
             head, sep, tail = self.cache.partition(line_end)
             if not sep:
@@ -247,8 +229,8 @@ class WeaterServerUARTProtocol(asyncio.Protocol):
             if not line or line[0] != "D":
                 continue
             line = line[1:]
-
-            print(line, len(line))
+            if DEBUG:
+                print(line, len(line))
             if len(line) < 4:  # expected_length (2) + targetid(2)
                 print("too short", line)
                 continue
@@ -265,7 +247,8 @@ class WeaterServerUARTProtocol(asyncio.Protocol):
             except Exception:
                 print("unable to decoder serial")
                 pass
-            self.processor.process(decoded)
+            update_task = asyncio.get_event_loop().create_task(self.processor.process(decoded))
+            update_task.add_done_callback(lambda x: None)
 
     def connection_lost(self, exc):
         print('port closed')
@@ -281,7 +264,8 @@ class WeaterServerProtocol(asyncio.DatagramProtocol):
         self.transport = transport
 
     def datagram_received(self, data, addr):
-        self.processor.process(data)
+        update_task = asyncio.get_event_loop().create_task(self.processor.process(data, addr=addr))
+        update_task.add_done_callback(lambda x: None)
 
     def error_received(self, exc):
         """Called when a send or receive operation raises an OSError.
@@ -289,9 +273,10 @@ class WeaterServerProtocol(asyncio.DatagramProtocol):
         (Other than BlockingIOError or InterruptedError.)
         """
         print("sum udp error", exc)
+        self.emergency_stop.set_exception(exc)
 
 
-async def udp_receiver(patocol):
+def prepare_socket():
     MCAST_GRP = '239.87.84.82'  # (239.W.T.R)
 
     host, port = cfg["bind"]["address"].split(":")
@@ -305,6 +290,11 @@ async def udp_receiver(patocol):
     sock.bind((host, int(port)))
     mreq = struct.pack("4sl", socket.inet_aton(MCAST_GRP), socket.INADDR_ANY)
     sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+    return sock
+
+
+async def udp_receiver(patocol):
+    sock = patocol.sock
     loop = asyncio.get_event_loop()
 
     emergency_stop = loop.create_future()
@@ -318,7 +308,11 @@ async def udp_receiver(patocol):
 
 
 async def uart_receiver(patocol):
-    serial_dev = cfg["bind"].get("serial_dev", "/dev/ttyUSB0")
+    serial_dev = cfg["bind"].get("serial_dev")
+    if not serial_dev:
+        while True:
+            await asyncio.sleep(100000)
+        return
     serial_baud = int(cfg["bind"].get("serial_baud", 115200))
     loop = asyncio.get_event_loop()
     emergency_stop = loop.create_future()
@@ -331,19 +325,19 @@ async def uart_receiver(patocol):
     await protocol.emergency_stop
 
 
-async def screen_sender():
-    while True:
-        await asyncio.sleep(100000)
+async def screen_sender(patocol: WeatherProcessor):
+    await patocol.st.run()
 
 
 async def main():
     # rsock, wsock = asyncio.create
     # create tasks
     # asyncio.seri
-    proceessor = WeatherProcessor()
+    sock = prepare_socket()
+    proceessor = WeatherProcessor(sock)
     udp_task = udp_receiver(proceessor)
     uart_task = uart_receiver(proceessor)
-    screen_task = screen_sender()
+    screen_task = screen_sender(proceessor)
     x = await asyncio.wait([udp_task, uart_task, screen_task], return_when=asyncio.FIRST_COMPLETED)
     print("should not be here", x)
     # exit(1)

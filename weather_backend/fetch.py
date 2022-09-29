@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-import subprocess
 import math
 from os import environ
 from os.path import join, exists
+from asyncio import subprocess, wait_for, Lock
 
 TIME = 24 * 60 * 60
 
@@ -110,6 +110,7 @@ class GasResistance(Gauge):
 
 
 class RRD:
+    lock = Lock()
     path = "."
     SENSOR_N_TEMPLATE = "sensors_%s.rrd"
     STEP = 600
@@ -135,47 +136,47 @@ class RRD:
     def _file_path(self, name):
         return join(self.path, self.SENSOR_N_TEMPLATE % name)
 
-    def _qx(self, args):
-        proc = subprocess.Popen(args,
-                                universal_newlines=True,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.DEVNULL,
-                                env=self._environ())
+    async def _qx(self, args):
+        proc = await subprocess.create_subprocess_exec(args[0], *args[1:],
+                                                       stdout=subprocess.PIPE,
+                                                       stderr=subprocess.DEVNULL,
+                                                       env=self._environ())
         try:
-            outs, _ = proc.communicate(timeout=10)
+            outs, _ = await wait_for(proc.communicate(), timeout=10)
             return (outs, True)
         except subprocess.TimeoutExpired:
             proc.kill()
-            outs, _ = proc.communicate()
+            outs, _ = await proc.communicate()
             return (outs, False)
 
     def _environ(self):
         return dict(environ, LANG="C")
 
-    def last(self, name):
-        rrdfile = self._file_path(name)
-        out, ok = self._qx(["rrdtool", "last", rrdfile])
-        if not ok:
-            return 0
-        return int(out)
+    async def last(self, name):
+        async with self.lock:
+            rrdfile = self._file_path(name)
+            out, ok = await self._qx(["rrdtool", "last", rrdfile])
+            if not ok:
+                return 0
+            return int(out)
 
-    def add_ds(self, name, something):
-        rrdfile = self._file_path(name)
-        args = ["rrdtool", "tune", rrdfile]
-        for ds in something:
-            if ds.startswith("DS:"):
-                rrd_cmd = args + [ds]
-                outs, ok = self._qx(rrd_cmd)
-                if not ok:
-                    print("unable to execute", rrd_cmd)
+    # async def add_ds(self, name, something):
+    #     rrdfile = self._file_path(name)
+    #     args = ["rrdtool", "tune", rrdfile]
+    #     for ds in something:
+    #         if ds.startswith("DS:"):
+    #             rrd_cmd = args + [ds]
+    #             outs, ok = await self._qx(rrd_cmd)
+    #             if not ok:
+    #                 print("unable to execute", rrd_cmd)
 
-    def tune(self, name, gauges):
+    async def _tune(self, name, gauges):
         # use tune to add/remove DS to existing file
         # rrdtool tune my.rrd DS:ds_name:GAUGE:900:-50:100
 
         rrdfile = self._file_path(name)
         for g in gauges:
-            _, ok = self._qx(["rrdtool", "tune", rrdfile, g.template()])
+            _, ok = await self._qx(["rrdtool", "tune", rrdfile, g.template()])
             if not ok:
                 raise Exception("unable to tune rrd")
 
@@ -209,37 +210,39 @@ class RRD:
                 data[n].append(v)
         return data
 
-    def lastupdate(self, name):
-        rrdfile = self._file_path(name)
-        outs, _ = self._qx(["rrdtool", "lastupdate", rrdfile])
-        return self._parse(outs.splitlines())
+    async def lastupdate(self, name):
+        async with self.lock:
+            rrdfile = self._file_path(name)
+            outs, _ = await self._qx(["rrdtool", "lastupdate", rrdfile])
+            return self._parse(outs.splitlines())
         # remove nan at end
 
-    def rrdfetch(self, name, start=TIME):
-        RRDFILE = join(self.path, self.SENSOR_N_TEMPLATE % name)
+    async def rrdfetch(self, name, start=TIME):
+        async with self.lock:
+            RRDFILE = join(self.path, self.SENSOR_N_TEMPLATE % name)
 
-        # Order of date is equal to create
-        # temp
-        # hum
-        # pres
-        # volt
-        # function push(A,B) { A[length(A)+1] = B }
+            # Order of date is equal to create
+            # temp
+            # hum
+            # pres
+            # volt
+            # function push(A,B) { A[length(A)+1] = B }
 
-        # NOTE(m): We should ensure now from graph and now from fetch matches!
-        # Otherwises values will be shifted by one (in our case 10minutes)
-        outs, _ = self._qx(["rrdtool", "fetch", RRDFILE, "AVERAGE",
-                           "--start", "now-%d" % start, "--end", "now"])
-        return self._parse(outs.splitlines())
+            # NOTE(m): We should ensure now from graph and now from fetch matches!
+            # Otherwises values will be shifted by one (in our case 10minutes)
+            outs, _ = await self._qx(["rrdtool", "fetch", RRDFILE, "AVERAGE",
+                                      "--start", "now-%d" % start, "--end", "now"])
+            return self._parse(outs.splitlines())
 
     def _default_gauges_templates(self):
         return [x.template() for x in self.DEFAULT_GAUGES]
 
-    def _create(self, name: str):
+    async def _create(self, name: str):
         rrd_file = self._file_path(name)
         if exists(rrd_file):
             return True
 
-        return subprocess.run([
+        _, ok = await self._qx([
             "rrdtool",
             "create",
             rrd_file,
@@ -250,20 +253,22 @@ class RRD:
             *self._default_gauges_templates(),
             "RRA:AVERAGE:0.5:1:%d" %
             self.SAMPLES_Y  # 1 YEAR by STEP Save 1 YEAR by STEP resolution
-        ], env=self._environ())
+        ])
+        return ok
 
-    def get_rrd_structure(self, name: str):
+    async def _get_rrd_structure(self, name: str):
         if name in self.cache:
             return self.cache[name]
 
         rrd_file = self._file_path(name)
-        out, ok = self._qx([
+        out, ok = await self._qx([
             "rrdtool", "info", rrd_file,
         ])
         if not ok:
             raise Exception("bazinga")
         desc = set()
-        for l in out.splitlines():
+        for l in out.decode("utf-8").splitlines():
+            l = l
             if not l.startswith("ds["):
                 continue
             end_name = l.find("]")
@@ -272,27 +277,42 @@ class RRD:
             if g is None:
                 raise Exception("invalid schema")
             desc.add(g)
+        if not desc:
+            raise Exception("XXX")
+            print("wholy cow")
         self.cache[name] = desc
         return desc
 
-    def add(self, name: str, data: tuple):
-        # temp, hum, pres, volt = data[0:4]
-        rrd_file = self._file_path(name)
-        if not self._create(name):
-            raise Exception("Unable to create storage for %s" % name)
-        schema = self.get_rrd_structure(name)
-        # do we need tune it?
-        missing = set((x.__class__ for x in data)) - schema
-        if missing:
-            self.tune(name, missing)
-        # prepare template
+    def _is_valid_entry(self, x) -> bool:
+        if not hasattr(x, "DS_NAME"):
+            return False
+        if not hasattr(x, "value"):
+            return False
+        return True
 
-        template = ":".join((x.DS_NAME for x in data))
-        values = ":".join(("%f" % x.value for x in data))
+    async def add(self, name: str, data: tuple):
+        async with self.lock:
+            # temp, hum, pres, volt = data[0:4]
+            rrd_file = self._file_path(name)
+            if not await self._create(name):
+                raise Exception("Unable to create storage for %s" % name)
+            schema = await self._get_rrd_structure(name)
 
-        subprocess.run([
-            "rrdtool", "update", rrd_file,
-            "--template", template,
-            "--",
-            f"N:{values}",
-        ], env=self._environ())
+            for bad in (x for x in data if not self._is_valid_entry(x)):
+                raise Exception(f"{bad} is not descendant of Gauge")
+
+            # do we need tune it?
+            missing = set((x.__class__ for x in data)) - schema
+            if missing:
+                await self._tune(name, missing)
+            # prepare template
+
+            template = ":".join((x.DS_NAME for x in data))
+            values = ":".join(("%f" % x.value for x in data))
+
+            await self._qx([
+                "rrdtool", "update", rrd_file,
+                "--template", template,
+                "--",
+                f"N:{values}",
+            ])

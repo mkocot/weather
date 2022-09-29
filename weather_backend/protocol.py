@@ -143,11 +143,6 @@ class VOCSensor(BaseModule):
         self.co2 = co2
         # 2 bits for each iaq, iaq_static, co2
         self.flags = flags
-        print(
-            flags & 0x03,
-            (flags >> 2) & 0x3,
-            (flags >> 4) & 0x3
-            )
 
     @classmethod
     def parse(cls, data):
