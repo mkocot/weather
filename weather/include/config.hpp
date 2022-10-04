@@ -3,6 +3,7 @@
 
 #include <Arduino.h>
 
+#define W_OTA 1
 
 #define W_RADIO_WIFI 1
 #define W_RADIO_RFM69 69

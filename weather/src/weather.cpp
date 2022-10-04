@@ -1,7 +1,32 @@
 
 #include "config.hpp"
 #include "radio.hpp"
+#include <TaskScheduler.h>
 #include <wtocol.hpp>
+
+#include <AsyncElegantOTA.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <WiFi.h>
+
+AsyncWebServer server(80);
+
+static void handle_read_sensor();
+static void handle_send_message();
+
+// Read sensor once per 5 minutes (if 680) or 10minutes (if 280)
+const constexpr auto READ_INTERVAL =
+    W_BME_TYPE == W_BME_680 ? 300000 : W_REPORT_INTERVAL / 1000;
+// send interval is equal to read interval on 280, or 1min on 680
+const constexpr auto SEND_INTERVAL =
+    W_BME_TYPE == W_BME_680 ? READ_INTERVAL / 4 : READ_INTERVAL;
+
+Scheduler scheduler;
+Task task_read_sensor(READ_INTERVAL, TASK_FOREVER, handle_read_sensor,
+                      &scheduler, true);
+// Send message once overy 2minutes
+Task task_send_message(SEND_INTERVAL, TASK_FOREVER, handle_send_message,
+                       &scheduler, true);
 
 #if W_DEBUG
 #  define DPRINT(x) Serial.print(x)
@@ -54,7 +79,7 @@ Bsec bme;
 Adafruit_BME680 bme = {};
 #    endif
 static void checkStatus() {
-    if (bme.status != BSEC_OK) {
+  if (bme.status != BSEC_OK) {
     if (bme.status < BSEC_OK) {
       auto output = "BSEC error code : " + String(bme.status);
       Serial.println(output);
@@ -65,7 +90,7 @@ static void checkStatus() {
       Serial.println(output);
     }
   }
- 
+
   if (bme.bme680Status != BME680_OK) {
     if (bme.bme680Status < BME680_OK) {
       auto output = "BME680 error code : " + String(bme.bme680Status);
@@ -79,18 +104,12 @@ static void checkStatus() {
   }
 }
 static float waterSatDensity(float temp) {
-		const auto rho_max = (6.112* 100 * exp((17.62 * temp)/(243.12 + temp)))/(461.52 * (temp + 273.15));
-		return rho_max;
+  const auto rho_max = (6.112 * 100 * exp((17.62 * temp) / (243.12 + temp))) /
+                       (461.52 * (temp + 273.15));
+  return rho_max;
 }
 
-struct state {
-  time_t next_send_values;
-  time_t next_read_sensor;
-};
-state state;
 static void setupBME280() {
-  state.next_read_sensor = millis() + 30000;
-
   const constexpr auto OVERSAMPLING = BME680_OS_16X;
   Serial.println("Enabling TheWire");
   Wire.begin();
@@ -103,16 +122,16 @@ static void setupBME280() {
       // BSEC_OUTPUT_RAW_HUMIDITY,
       BSEC_OUTPUT_RAW_PRESSURE,
       BSEC_OUTPUT_RAW_GAS,
-      BSEC_OUTPUT_IAQ, /* so this is somehow scalled ? */
+      BSEC_OUTPUT_IAQ,        /* so this is somehow scalled ? */
       BSEC_OUTPUT_STATIC_IAQ, /* unscalled */
       BSEC_OUTPUT_CO2_EQUIVALENT,
       // BSEC_OUTPUT_BREATH_VOC_EQUIVALENT,
       BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
       BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
   };
-  bme.updateSubscription(
-      sensor_list, sizeof(sensor_list) / sizeof(bsec_virtual_sensor_t),
-      BSEC_SAMPLE_RATE_ULP);
+  bme.updateSubscription(sensor_list,
+                         sizeof(sensor_list) / sizeof(bsec_virtual_sensor_t),
+                         BSEC_SAMPLE_RATE_ULP);
   checkStatus();
   // bsec.setConfig
 #    if 0
@@ -135,13 +154,19 @@ ADC_MODE(ADC_VCC); /* init input voltage mesure */
 
 uint32_t inVolt;
 
+// split into 2 packets? 'base' and 'extra'?
+#if W_BME_TYPE == W_BME_680
+#  define W_EXTRA_PACKET (1)
+auto extraPacket = SensorsPacketizer<GasSensor>();
+#endif
+
 auto replyPacketNew = SensorsPacketizer<
 #if W_BME_TYPE
-    VoltageSensor, PressureSensor, HumiditySensor, TemperatureSensor
-#  if W_BME_TYPE == W_BME_680
+    PressureSensor, HumiditySensor, TemperatureSensor
+#  if W_BME_TYPE == W_BME_280
     ,
-    GasSensor
-#  endif /* W_BME_TYPE == W_BME_680 */
+    VoltageSensor
+#  endif /* W_BME_TYPE == W_BME_280 */
 #endif   /* W_BME_TYPE */
 #if W_SOIL_MOISTURE
 #  if W_BME_TYPE
@@ -151,14 +176,8 @@ auto replyPacketNew = SensorsPacketizer<
 #endif
     >();
 
-
 static int readSoilMoisture();
 static int readSoilMoisture() {
-#if ESP32
-  const auto analogValue = analogRead(4);
-  Serial.println(analogValue);
-  return 0;
-#else
   const constexpr auto IN_AIR = 645.0F;
   // value for emerged in water until white line
   const constexpr auto IN_WATER = 268.0F;
@@ -172,38 +191,11 @@ static int readSoilMoisture() {
 
   const auto moistureLevel = map(analogValue, IN_AIR, IN_WATER, 0, 100);
   return constrain(moistureLevel, 0, 100);
-#endif
 }
 
 static void printValues();
 
 static void sendValues();
-
-void setup() {
-  setupLED();
-  enableLED();
-#if W_VERBOSE
-  Serial.begin(115200);
-  // Serial.begin(9600);
-  while (!Serial) {
-    blink();
-    /* wait for serial port to connect. Needed for native USB */
-    delay(100);
-  }
-#endif
-#if W_BME_TYPE != W_BME_OFF
-  setupBME280();
-#endif
-
-  if (radio_setup()) {
-#if W_VERBOSE
-    Serial.println("setup fialed");
-#endif
-  }
-
-  disableLED();
-  radio_id(&replyPacketNew.mBytes[2]);
-}
 
 static int batteryVoltage() {
 #if W_SOIL_MOISTURE
@@ -216,7 +208,7 @@ static int batteryVoltage() {
 #endif
 }
 
-void loop() {
+static void handle_read_sensor() {
   /* NOTE: We are using deepSleep so every iteration starts with setup() */
   inVolt = batteryVoltage();
 #if 0
@@ -229,88 +221,57 @@ void loop() {
     return;
   }
 #endif
-/* Only needed in forced mode! In normal mode, you can remove the next line. */
+
 #if W_BME_TYPE == W_BME_280
+  /* Only needed in forced mode! In normal mode, you can remove the next line.
+   */
   bme.takeForcedMeasurement();
-#elif W_BME_TYPE == W_BME_680
-    bme.run();
-#endif
-
-  sendValues();
-
-#if W_VERBOSE
-  printValues();
-#endif
-
-#if W_DEBUG
-// TODO: air quality requires poling very 300s (in ULP mode)
-// for now just ask once in minute
-delay(299000);
-// delay(3000);
-  // delay(10000);
-#else
-#  if W_AC_TYPE == W_AC_DIRECT
-  delay(W_REPORT_INTERVAL);
-#  else
-#    if W_VERBOSE
-  Serial.println("going into deep sleep mode");
-#    endif
-  ESP.deepSleep(W_REPORT_INTERVAL);
-  delay(100);
-#  endif /* W_AC_TYPE */
-#endif   /* W_DEBUG */
-}
-
-
-
-static void sendValues() {
-#if W_BME_TYPE == W_BME_280
   replyPacketNew.set<TemperatureSensor>(bme.readTemperature());
   replyPacketNew.set<PressureSensor>(bme.readPressure());
   replyPacketNew.set<HumiditySensor>(bme.readHumidity());
   replyPacketNew.set<VoltageSensor>(inVolt);
 #elif W_BME_TYPE == W_BME_680
+  bme.run();
   replyPacketNew.set<TemperatureSensor>(bme.temperature);
   replyPacketNew.set<PressureSensor>(bme.pressure);
   replyPacketNew.set<HumiditySensor>(bme.humidity);
   // For now ignore voltage
-  replyPacketNew.set<VoltageSensor>(inVolt);
-  replyPacketNew.set<GasSensor>(
-    GasSensor(bme.gasResistance,
-              bme.iaq,
-              bme.staticIaq,
-              bme.co2Equivalent,
-              // each value is from 0 to 2 -> mask 0x03 and is uses 2 bits
-              // accuracy in order of emited fields
-              // 0, 1 - iaq accuracy
-              // 2, 3 - static iaq accuracy
-              // 4, 5 - co2accuracy
-              (bme.iaqAccuracy & 0x03) 
-              | ((bme.staticIaqAccuracy & 0x03) << 2) 
-              | ((bme.co2Accuracy & 0x03) << 4)
-              )
-  );
-    // bme.staticIaq,
-    // bme.iaq,
-    // bme.co2Equivalent
-    // });
-#else
-#  error Bad sensor
+  // replyPacketNew.set<VoltageSensor>(inVolt);
+  extraPacket.set<GasSensor>(GasSensor(
+      bme.gasResistance, bme.iaq, bme.staticIaq, bme.co2Equivalent,
+      // each value is from 0 to 2 -> mask 0x03 and is uses 2 bits
+      // accuracy in order of emited fields
+      // 0, 1 - iaq accuracy
+      // 2, 3 - static iaq accuracy
+      // 4, 5 - co2accuracy
+      (bme.iaqAccuracy & 0x03) | ((bme.staticIaqAccuracy & 0x03) << 2) |
+          ((bme.co2Accuracy & 0x03) << 4)));
 #endif
 
 #if W_SOIL_MOISTURE
   replyPacketNew.set<SoilMoisture>(readSoilMoisture());
 #endif
-
-  if (radio_send_all(replyPacketNew.mBytes, sizeof(replyPacketNew.mBytes))) {
 #if W_VERBOSE
-    Serial.println("send_fialed");
+  printValues();
 #endif
+}
+
+static void handle_send_message() {
+  // TODO(m): use extra only for BME680
+  static int counter = 0;
+  int ret;
+  if ((counter++) & 0x1) {
+    // send "extra"
+    ret = radio_send_all(extraPacket.mBytes, sizeof(extraPacket.mBytes));
+  } else {
+    // send "normal"
+    ret = radio_send_all(replyPacketNew.mBytes, sizeof(replyPacketNew.mBytes));
   }
-  // radio_rfm69_send_all(replyPacket, REPLY_PACKET_SIZE);
-  /* NOTE(m): Required to SEND data over networt */
-  delay(300);
-  yield();
+
+  if (ret) {
+    Serial.print("send finished: ");
+    Serial.println(ret);
+  }
 }
 
 static void printValues() {
@@ -397,4 +358,79 @@ static void printValues() {
 #  error Whoops
 #endif
   Serial.println();
+}
+
+// Main entries
+
+void setup() {
+  setupLED();
+  enableLED();
+  Serial.begin(115200);
+  // Serial.begin(9600);
+  while (!Serial) {
+    blink();
+    /* wait for serial port to connect. Needed for native USB */
+    delay(100);
+  }
+
+#if W_DEBUG
+  delay(2000);
+#endif
+  // enable hidden fifi and ota
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP(W_OTA_WIFI_NAME, W_OTA_WIFI_PASS, 6, 1);
+  WiFi.setTxPower(WIFI_POWER_2dBm);
+  Serial.print("WiFi IP: ");
+  Serial.println(WiFi.softAPIP());
+
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
+    request->send(200, "text/plain", "Go to /update");
+  });
+
+  AsyncElegantOTA.begin(&server);
+  server.begin();
+
+#if W_BME_TYPE != W_BME_OFF
+  setupBME280();
+#endif
+
+  while (radio_setup()) {
+#if W_VERBOSE
+    Serial.println("setup fialed");
+#endif
+    delay(500);
+  }
+
+  uint64_t device_id = 0;
+  radio_id(reinterpret_cast<uint8_t *>(&device_id));
+  replyPacketNew.setId(device_id);
+#if W_EXTRA_PACKET
+  extraPacket.setId(device_id);
+#endif
+
+  scheduler.startNow();
+  disableLED();
+}
+void loop() {
+  // TODO(m): Invoke directly when battery powered
+#if 0
+    handle_read_sensor();
+    handle_send_message();
+
+#  if W_AC_TYPE == W_AC_DIRECT
+#    if W_BME_TYPE == W_BME_680
+  delay(299000);
+#    else
+  delayMicroseconds(W_REPORT_INTERVAL);
+#    endif
+#  else
+#    if W_VERBOSE
+  Serial.println("going into deep sleep mode");
+#    endif
+  ESP.deepSleep(W_REPORT_INTERVAL);
+  delay(100);
+#  endif /* W_AC_TYPE */
+#else
+  scheduler.execute();
+#endif
 }

@@ -73,6 +73,10 @@ int radio_wifi_send_all(const uint8_t* data, size_t len) {
   Udp.beginPacketMulticast(W_WIFI_MULTICAST, UDP_PORT, W_WIFI_IP, 1 /*TTL*/);
   #endif
   Udp.write(data, len);
-  return Udp.endPacket() == 0;
+  auto status = Udp.endPacket() == 0;
+  // radio_rfm69_send_all(replyPacket, REPLY_PACKET_SIZE);
+  /* NOTE(m): Required to SEND data over networt */
+  delay(300);
+  return status;
 }
 #endif
