@@ -17,7 +17,7 @@ import traceback
 
 from config import load_config
 
-from paho.mqtt.client import Client
+from asyncio_paho.client import AsyncioPahoClient
 import asyncio
 
 import serial_asyncio
@@ -151,20 +151,70 @@ class ScreenThread:
             screen.deadline = time.time() + timeout
             screen.addr = addr[0]
 
+
 DEBUG = False
 
 # st = ScreenThread()
 # st.start()
 # st.add_screen("e8db849381ec", ("10.0.0.28", 0))
+
+
 class WOutEncoder(json.JSONEncoder):
     def default(self, o):
         if hasattr(o, 'value'):
             return o.value
         raise Exception('boom')
 class WeatherProcessor:
-    def __init__(self, sock):
-        self.sock = sock
+    def __init__(self, cfg):
+        self.cfg = cfg
+        self.sock = self._prepare_socket()
         self.st = ScreenThread(self.sock)
+        self.mqtt = None
+        # hold active devices, prune if timeout is larger than 30min
+        self.sensors = {}
+
+    def _prepare_socket(self):
+        MCAST_GRP = '239.87.84.82'  # (239.W.T.R)
+
+        host, port = self.cfg['bind']['address'].split(':')
+        # host = ""
+        sock = socket.socket(
+            socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
+        # sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b"enp6s0")
+        # host = ''
+        sock.bind((host, int(port)))
+        mreq = struct.pack('4sl', socket.inet_aton(
+            MCAST_GRP), socket.INADDR_ANY)
+        sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
+        return sock
+
+    async def _prepare_mqtt(self):
+        mqtt_cfg = self.cfg.get('mqtt')
+        if not mqtt_cfg:
+            print('no MQTT config')
+            return
+
+        broker = mqtt_cfg.get('broker')
+        if not broker:
+            print('no broker configured')
+            return
+
+        self.mqtt = AsyncioPahoClient(client_id='Weather-Backend')
+        ok = await self.mqtt.asyncio_connect(host=broker)
+
+        return ok
+
+    async def run(self):
+        # 1) connect to broker
+        udp_task = udp_receiver(self)
+        uart_task = uart_receiver(self)
+        screen_task = screen_sender(self)
+        tasks = [udp_task, uart_task, screen_task]
+        x = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
+        return x
 
     async def process(self, data, *, addr=None):
         try:
@@ -191,12 +241,20 @@ class WeatherProcessor:
                 sensors['iaq_static'] = fetch.StaticIaq(sid.iaq_static)
                 sensors['iaq'] = fetch.Iaq(sid.iaq)
                 sensors['co2'] = fetch.Co2(sid.co2)
+                sensors['gas_raw'] = fetch.GasResistance(sid.gas_raw)
             elif module_name:
                 sensors[module_name] = converter(sid.value)
             else:
                 print(f'Unknown module: {sid.MODULE_ID}')
 
         await RRD.add(df.device_id, sensors.values())
+
+        # broadcast
+        await self.mqtt.asyncio_publish(topic='weather/device', payload=df.device_id)
+        for k,v in sensors.items():
+            topic = f'weather/{df.device_id}/{k}'
+            await self.mqtt.asyncio_publish(topic=topic, payload=v)
+
         if DEBUG:
             sensors['rcvtime'] = rcvtime
             as_json = json.dumps(sensors, cls=WOutEncoder)
@@ -248,7 +306,8 @@ class WeaterServerUARTProtocol(asyncio.Protocol):
             except Exception:
                 print('unable to decoder serial')
                 pass
-            update_task = asyncio.get_event_loop().create_task(self.processor.process(decoded))
+            update_task = asyncio.get_event_loop().create_task(
+                self.processor.process(decoded))
             update_task.add_done_callback(lambda x: None)
 
     def connection_lost(self, exc):
@@ -265,7 +324,8 @@ class WeaterServerProtocol(asyncio.DatagramProtocol):
         self.transport = transport
 
     def datagram_received(self, data, addr):
-        update_task = asyncio.get_event_loop().create_task(self.processor.process(data, addr=addr))
+        update_task = asyncio.get_event_loop().create_task(
+            self.processor.process(data, addr=addr))
         update_task.add_done_callback(lambda x: None)
 
     def error_received(self, exc):
@@ -275,23 +335,6 @@ class WeaterServerProtocol(asyncio.DatagramProtocol):
         '''
         print('sum udp error', exc)
         self.emergency_stop.set_exception(exc)
-
-
-def prepare_socket():
-    MCAST_GRP = '239.87.84.82'  # (239.W.T.R)
-
-    host, port = cfg['bind']['address'].split(':')
-    # host = ""
-    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM, socket.IPPROTO_UDP)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
-    # sock.setsockopt(socket.SOL_SOCKET, socket.SO_BINDTODEVICE, b"enp6s0")
-    # host = ''
-    sock.bind((host, int(port)))
-    mreq = struct.pack('4sl', socket.inet_aton(MCAST_GRP), socket.INADDR_ANY)
-    sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
-    return sock
 
 
 async def udp_receiver(patocol):
@@ -329,17 +372,20 @@ async def screen_sender(patocol: WeatherProcessor):
     await patocol.st.run()
 
 
+async def mqtt_notifier():
+    while True:
+        # broadcast active devices
+        print('faketify')
+        await asyncio.sleep(30)
+
+
 async def main():
     # rsock, wsock = asyncio.create
     # create tasks
     # asyncio.seri
-    sock = prepare_socket()
-    proceessor = WeatherProcessor(sock)
-    udp_task = udp_receiver(proceessor)
-    uart_task = uart_receiver(proceessor)
-    screen_task = screen_sender(proceessor)
-    x = await asyncio.wait([udp_task, uart_task, screen_task], return_when=asyncio.FIRST_COMPLETED)
-    print('should not be here', x)
+    processor = WeatherProcessor()
+    error = await processor.run()
+    print('should not be here', error)
     # exit(1)
 
 

@@ -1,4 +1,4 @@
-paho-mqtt
+asyncio-paho
 Pillow
 toml
 pyserial-asyncio

@@ -3,6 +3,11 @@ import bottle
 import time
 import fetch
 import json
+import asyncio
+import concurrent
+
+# this is dirty hack
+loop = None
 
 
 @bottle.get("/<name>")
@@ -18,7 +23,7 @@ def index():
 @bottle.get("/data/<id>/last.json")
 def data_last(id: str):
     rrd = fetch.RRD(".")
-    data = rrd.lastupdate(id)
+    data = asyncio.run_coroutine_threadsafe(rrd.lastupdate(id), loop).result()
     return data
 
 
@@ -36,7 +41,7 @@ def filter_data(data):
             if values[i]:
                 continue
             # ok we got datapoint without value
-            if i > 0:
+            if i > 0 and values[i - 1]:
                 first_point = values[i - 1]
             else:
                 # first datapoint without value, this is bad
@@ -57,6 +62,39 @@ def filter_data(data):
     return data
 
 
+async def _last_from_sensors(rrd, sensors):
+    result = asyncio.gather(*[rrd.last(x) for x in sensors])
+    lasts = max([x for x in await result if x])
+    if not lasts:
+        return 0
+    return lasts[0]
+
+
+async def _data_from_sensors(rrd, sensors):
+    result = {}
+
+    datas = asyncio.gather(*[rrd.rrdfetch(x) for x in sensors])
+
+    for idx in range(len(sensors)):
+        s = sensors[idx]
+        data = datas[idx]
+        if "time" not in data:
+            now = int(time.time())
+            data["time"] = [now - 600, now]
+        time_slots = data.pop("time")
+        data = filter_data(data)
+        tick = time_slots[1] - time_slots[0]
+
+        data["clock"] = {
+            "tick": tick,
+            "start": time_slots[0],
+            "count": len(time_slots),
+        }
+        result[s] = data
+
+    return result
+
+
 @bottle.get("/data.json")
 def data():
     rrd = fetch.RRD(".")
@@ -66,7 +104,7 @@ def data():
     # ec62609d4998 - outside
     sensors = ["e09806259a66", "24a1603048ba", "ec62609d4998"]
     for fn in sensors:
-        lu = rrd.last(fn)
+        lu = asyncio.run_coroutine_threadsafe(rrd.last(fn), loop).result()
         if not lu:
             continue
         if not last:
@@ -83,9 +121,9 @@ def data():
                                         time.gmtime())
         return bottle.HTTPResponse(status=304, **headers)
 
-    resp = {}
+    resp = {} #asyncio.run_coroutine_threadsafe(_data_from_sensors(rrd, sensors), loop).result()
     for s in sensors:
-        data = rrd.rrdfetch(s)
+        data = asyncio.run_coroutine_threadsafe(rrd.rrdfetch(s), loop).result()
         if "time" not in data:
             now = int(time.time())
             data["time"] = [now - 600, now]
@@ -111,7 +149,16 @@ def data():
     resp["clock"] = clock_data
     resp = json.dumps(resp).encode("utf-8")
     headers['Content-Length'] = len(resp)
+    headers['Content-Type'] = 'application/json'
     return bottle.HTTPResponse(resp, **headers)
 
 
-bottle.run(host='localhost', port=8086, debug=False, quiet=True)
+async def main():
+    global loop
+    loop = asyncio.get_event_loop()
+
+    with concurrent.futures.ThreadPoolExecutor() as pool:
+        result = await loop.run_in_executor(pool, lambda: bottle.run(host='localhost', port=8086, debug=False, quiet=True))
+        print('custom thread pool', result)
+
+asyncio.run(main())
