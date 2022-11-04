@@ -120,7 +120,7 @@ class RRD:
     DAY = 24 * HOUR
     YEAR = 370 * DAY  # Yes, longer than 'real' year
 
-    SAMPLES_Y = YEAR / STEP
+    SAMPLES_Y = 5*YEAR / STEP
 
     KNOWN_GAUGES = {x.DS_NAME: x for x in (
         Temp, Humidity, Pres, Volt, Iaq, StaticIaq, Co2, GasResistance)}
@@ -143,11 +143,11 @@ class RRD:
                                                        env=self._environ())
         try:
             outs, _ = await wait_for(proc.communicate(), timeout=10)
-            return (outs, True)
+            return (outs.decode('utf-8'), True)
         except subprocess.TimeoutExpired:
             proc.kill()
             outs, _ = await proc.communicate()
-            return (outs, False)
+            return (outs.decode('utf-8'), False)
 
     def _environ(self):
         return dict(environ, LANG="C")
