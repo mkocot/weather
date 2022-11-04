@@ -1,4 +1,8 @@
-asyncio-paho
+# data bridge
+asyncio-mqtt
 Pillow
 toml
 pyserial-asyncio
+
+# server
+quart

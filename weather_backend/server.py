@@ -1,29 +1,41 @@
 #!/usr/bin/env python3
-import bottle
-import time
-import fetch
-import json
+import argparse
 import asyncio
-import concurrent
+import datetime
+import sys
+import time
 
-# this is dirty hack
-loop = None
+import quart
+
+import fetch
+
+parser = argparse.ArgumentParser()
+parser.add_argument("--address", default="127.0.0.1:8086")
+parser.add_argument("--static-dir", default=".")
+parser.add_argument("--data-dir", default=".")
+args = parser.parse_args()
 
 
-@bottle.get("/<name>")
-def serve_static(name):
-    return bottle.static_file(name, "web/graph")
+app = quart.Quart(__name__, static_url_path='', static_folder=args.static_dir)
 
 
-@bottle.get("/")
-def index():
-    return bottle.static_file("index.html", "web/graph")
+def get_rrd() -> fetch.RRD:
+    return fetch.RRD(args.data_dir)
 
 
-@bottle.get("/data/<id>/last.json")
-def data_last(id: str):
-    rrd = fetch.RRD(".")
-    data = asyncio.run_coroutine_threadsafe(rrd.lastupdate(id), loop).result()
+@app.route("/<name>")
+async def serve_static(name):
+    return await quart.send_from_directory('web/graph', name)
+
+
+@app.route("/")
+async def index():
+    return await quart.send_from_directory("web/graph", 'index.html')
+
+
+@app.route("/data/<id>/last.json")
+async def data_last(id: str):
+    data = await get_rrd().lastupdate(id)
     return data
 
 
@@ -66,14 +78,13 @@ async def _last_from_sensors(rrd, sensors):
     result = asyncio.gather(*[rrd.last(x) for x in sensors])
     lasts = max([x for x in await result if x])
     if not lasts:
-        return 0
-    return lasts[0]
+        lasts = 0
+    return datetime.datetime.fromtimestamp(lasts, tz=datetime.timezone.utc)
 
 
 async def _data_from_sensors(rrd, sensors):
     result = {}
-
-    datas = asyncio.gather(*[rrd.rrdfetch(x) for x in sensors])
+    datas = await asyncio.gather(*[rrd.rrdfetch(x) for x in sensors])
 
     for idx in range(len(sensors)):
         s = sensors[idx]
@@ -95,49 +106,18 @@ async def _data_from_sensors(rrd, sensors):
     return result
 
 
-@bottle.get("/data.json")
-def data():
-    rrd = fetch.RRD(".")
-    resp = "{}"
-    headers = dict()
-    last = 0
+@app.route("/data.json")
+async def data():
+    rrd = get_rrd()
     # ec62609d4998 - outside
     sensors = ["e09806259a66", "24a1603048ba", "ec62609d4998"]
-    for fn in sensors:
-        lu = asyncio.run_coroutine_threadsafe(rrd.last(fn), loop).result()
-        if not lu:
-            continue
-        if not last:
-            last = lu
-        else:
-            last = max(last, lu)
-    lm = time.strftime("%a, %d %b %Y %H:%M:%S GMT", time.gmtime(last))
-    headers['Last-Modified'] = lm
-    ims = bottle.request.environ.get('HTTP_IF_MODIFIED_SINCE')
-    if ims:
-        ims = bottle.parse_date(ims.split(";")[0].strip())
-    if ims is not None and ims >= last:
-        headers['Date'] = time.strftime("%a, %d %b %Y %H:%M:%S GMT",
-                                        time.gmtime())
-        return bottle.HTTPResponse(status=304, **headers)
+    last = await _last_from_sensors(rrd, sensors)
+    ims = quart.request.if_modified_since
+    if ims and ims >= last:
+        return "Unchanged", 304
 
-    resp = {} #asyncio.run_coroutine_threadsafe(_data_from_sensors(rrd, sensors), loop).result()
-    for s in sensors:
-        data = asyncio.run_coroutine_threadsafe(rrd.rrdfetch(s), loop).result()
-        if "time" not in data:
-            now = int(time.time())
-            data["time"] = [now - 600, now]
-        time_slots = data.pop("time")
-        data = filter_data(data)
-        tick = time_slots[1] - time_slots[0]
+    resp = await _data_from_sensors(rrd, sensors)
 
-        data["clock"] = {
-            "tick": tick,
-            "start": time_slots[0],
-            "count": len(time_slots),
-        }
-
-        resp[s] = data
     # debug compare clocks
     clock_data = None
     for s in sensors:
@@ -147,18 +127,22 @@ def data():
         if clock_data != resp[s]["clock"]:
             print("diff", s, clock_data, resp[s]["clock"])
     resp["clock"] = clock_data
-    resp = json.dumps(resp).encode("utf-8")
-    headers['Content-Length'] = len(resp)
-    headers['Content-Type'] = 'application/json'
-    return bottle.HTTPResponse(resp, **headers)
+
+    response = quart.jsonify(resp)
+    response.last_modified = last
+
+    return response
 
 
-async def main():
-    global loop
-    loop = asyncio.get_event_loop()
+def main():
+    host, port = args.address.split(":")
+    # privide loop, for old version of python
+    if sys.version_info < (3, 10, 0):
+        loop = asyncio.get_event_loop()
+    else:
+        loop = None
 
-    with concurrent.futures.ThreadPoolExecutor() as pool:
-        result = await loop.run_in_executor(pool, lambda: bottle.run(host='localhost', port=8086, debug=False, quiet=True))
-        print('custom thread pool', result)
+    app.run(host=host, port=int(port), loop=loop)
 
-asyncio.run(main())
+
+main()
