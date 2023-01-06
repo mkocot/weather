@@ -6,19 +6,14 @@
 #include <cstdint>
 #include <stdexcept>
 
-union data_view {
-  int32_t ival;
-  uint32_t uval;
-  float fval;
-  byte bval[4];
-};
-
-template <int ID, int SIZE = sizeof(int32_t)>
+template <int ID, typename T>
 class BaseSensor {
 public:
+  typedef T VALUE_TYPE;
   static constexpr const int SENSOR_ID = ID;
   // TOTAL Size: Sensor required size + Id
-  static constexpr const int SENSOR_DATA_SIZE = SIZE;
+  // static constexpr const int SENSOR_DATA_SIZE = SIZE;
+  static constexpr const int SENSOR_DATA_SIZE = sizeof(T);
   static constexpr const int SENSOR_SIZE = SENSOR_DATA_SIZE + 1;
 
   void set(int i) {}
@@ -26,20 +21,21 @@ public:
 // 7 image push
 // 6 screen sendor
 // 4 - reserverd
-class TemperatureSensor : public BaseSensor<0x01> {};
-class PressureSensor : public BaseSensor<0x02> {};
-class HumiditySensor : public BaseSensor<0x03> {};
+// Could be int16_t
+class TemperatureSensor : public BaseSensor<0x01, float> {};
+class PressureSensor : public BaseSensor<0x02, float> {};
+// Could be uint8_t
+class HumiditySensor : public BaseSensor<0x03, float> {};
 
-class __attribute__((packed)) GasSensor
-    : public BaseSensor<0x08, 4 * sizeof(float) + 1> {
+class __attribute__((packed)) GasSensorStorage {
 public:
   float gas_raw;    // resistance, Ohm
-  float iaq;        // IndexAirQuality, No unit
-  float iaq_static; // IndexAurQuality (scaled), No Unit
-  float co2;        // Co2 ppm equivalent, ppm
-  uint8_t flags;
+  float iaq;        // IndexAirQuality, No unit <0; 500>
+  float iaq_static; // IndexAurQuality (scaled), No Unit 
+  float co2;        // Co2 ppm equivalent, ppm 400 .. 2000
+  uint8_t flags; // 6bits
 
-  GasSensor(float gas_raw, float iaq, float iaq_static, float co2,
+  GasSensorStorage(float gas_raw, float iaq, float iaq_static, float co2,
             uint8_t flags)
       : gas_raw(gas_raw),
         iaq(iaq),
@@ -47,14 +43,14 @@ public:
         co2(co2),
         flags(flags) {}
 
-  GasSensor(const GasSensor &g)
+  GasSensorStorage(const GasSensorStorage &g)
       : gas_raw(g.gas_raw),
         iaq(g.iaq),
         iaq_static(g.iaq_static),
         co2(g.co2),
         flags(g.flags) {}
 
-  GasSensor(GasSensor &&g)
+  GasSensorStorage(GasSensorStorage &&g)
       : gas_raw(0), iaq(0), iaq_static(0), co2(0), flags(0) {
     gas_raw = g.gas_raw;
     g.gas_raw = 0;
@@ -72,7 +68,7 @@ public:
     g.flags = 0;
   }
 
-  GasSensor &operator=(GasSensor &&g) {
+  GasSensorStorage &operator=(GasSensorStorage &&g) {
     if (this == &g) {
       return *this;
     }
@@ -96,16 +92,32 @@ public:
   }
 };
 
+class GasSensor : public BaseSensor<0x08, GasSensorStorage> {
+};
+class VoltageSensor : public BaseSensor<0x05, uint32_t> {};
+class SoilMoisture : public BaseSensor<0x09, float> {};
+
 template <size_t A, size_t B>
 struct TAssertEquality {
   static_assert(A == B, "Not equal");
   static constexpr bool value = (A == B);
 };
+
+template <typename A, typename B>
+struct TypeAssertEquality {
+  static constexpr bool value = std::is_same_v<A, B>;
+  static_assert(value, "Not equal");
+};
+
+
+template <typename A, typename B>
+struct TAssertConvertability {
+  static constexpr bool value = std::is_convertible_v<A, B>;
+  static_assert(value, "Not equal");
+};
+
 static_assert(
-    TAssertEquality<sizeof(GasSensor), GasSensor::SENSOR_DATA_SIZE>::value,
-    "pack struct");
-class VoltageSensor : public BaseSensor<0x05> {};
-class SoilMoisture : public BaseSensor<0x09> {};
+    TAssertEquality<sizeof(GasSensorStorage), 17>::value, "pack struct");
 
 template <class X, class Tuple>
 class Idx;
@@ -206,14 +218,12 @@ public:
            (calc_offset(Idx<X, Sensors>::value, X::SENSOR_SIZE) + ...);
   }
 
-  template <typename S, typename V>
-  void set(const V &&val) {
+  template <typename S>
+  void set(const typename S::VALUE_TYPE &&val) {
     set<S>(val);
   }
-  template <typename S, typename V>
-  void set(const V &val) {
-    static_assert(S::SENSOR_DATA_SIZE == sizeof(V),
-                  "type too big, is that compund?");
+  template <typename S>
+  void set(const typename S::VALUE_TYPE &val) {
     // +1 so we don't overwrite sensor ID
     const auto constexpr offset = sensor_offset<S>() + 1;
 #if W_DEBUG

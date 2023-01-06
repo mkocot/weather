@@ -6,6 +6,12 @@
 #define radio_setup radio_rfm69_setup
 #define radio_id radio_rfm69_id
 #define radio_send_all radio_rfm69_send_all
+#elif W_RADIO_MODE == W_RADIO_HC12
+#include "radio_hc12.hpp"
+#define radio_setup radio_hc12_setup
+#define radio_id radio_hc12_id
+#define radio_send_all radio_hc12_send_all
+#define radio_send radio_hc12_send
 #else
 #include "radio_wifi.hpp"
 #define radio_setup radio_wifi_setup

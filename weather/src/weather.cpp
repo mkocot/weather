@@ -9,8 +9,17 @@
 #include <ESPAsyncWebServer.h>
 #include <WiFi.h>
 
-AsyncWebServer server(80);
+struct {
+  time_t last_send{0};
+  time_t last_send_end{0};
+  time_t last_read{0};
+  time_t last_read_end{0};
+  int radio_statue{0};
+  int radio_send{0};
+} status;
 
+AsyncWebServer server(80);
+#define W_BSEC (0)
 static void handle_read_sensor();
 static void handle_send_message();
 
@@ -19,7 +28,7 @@ const constexpr auto READ_INTERVAL =
     W_BME_TYPE == W_BME_680 ? 300000 : W_REPORT_INTERVAL / 1000;
 // send interval is equal to read interval on 280, or 1min on 680
 const constexpr auto SEND_INTERVAL =
-    W_BME_TYPE == W_BME_680 ? READ_INTERVAL / 4 : READ_INTERVAL;
+    W_BME_TYPE == W_BME_680 ? READ_INTERVAL / 2 : READ_INTERVAL;
 
 Scheduler scheduler;
 Task task_read_sensor(READ_INTERVAL, TASK_FOREVER, handle_read_sensor,
@@ -67,17 +76,9 @@ static void setupBME280() {
                   Adafruit_BME280::FILTER_OFF);
 }
 #  else
-#    if 1
+#    if W_BSEC
 #      include <bsec.h>
 Bsec bme;
-#    else
-#      include <Adafruit_BME680.h> /* include Adafruit library for BMP280 sensor */
-#      define W_BME_ADDRESS 0x76
-// 119
-// Adafruit_BME680 bmex(SS, MOSI, MISO, SCK);
-// I2C
-Adafruit_BME680 bme = {};
-#    endif
 static void checkStatus() {
   if (bme.status != BSEC_OK) {
     if (bme.status < BSEC_OK) {
@@ -103,6 +104,14 @@ static void checkStatus() {
     }
   }
 }
+#    else
+#      include <Adafruit_BME680.h> /* include Adafruit library for BMP280 sensor */
+#      define W_BME_ADDRESS 0x76
+// 119
+// Adafruit_BME680 bmex(SS, MOSI, MISO, SCK);
+// I2C
+Adafruit_BME680 bme = {};
+#    endif
 static float waterSatDensity(float temp) {
   const auto rho_max = (6.112 * 100 * exp((17.62 * temp) / (243.12 + temp))) /
                        (461.52 * (temp + 273.15));
@@ -110,10 +119,9 @@ static float waterSatDensity(float temp) {
 }
 
 static void setupBME280() {
-  const constexpr auto OVERSAMPLING = BME680_OS_16X;
   Serial.println("Enabling TheWire");
   Wire.begin();
-
+#    if W_BSEC
   bme.begin(BME680_I2C_ADDR_SECONDARY, Wire);
   checkStatus();
   bsec_virtual_sensor_t sensor_list[] = {
@@ -134,14 +142,16 @@ static void setupBME280() {
                          BSEC_SAMPLE_RATE_ULP);
   checkStatus();
   // bsec.setConfig
-#    if 0
-  bme.setHumidityOversampling(OVERSAMPLING);
-  bme.setTemperatureOversampling(OVERSAMPLING);
-  bme.setPressureOversampling(OVERSAMPLING);
-  bme.setIIRFilterSize(BME680_FILTER_SIZE_7);
-  bme.setODR(BME68X_ODR_NONE);
-  bme.setGasHeater(0, 0);
+#    else
   bme.begin();
+  // Using oversampling will invalidate temperature (sometimes overshot by 10*C)
+  // const constexpr auto OVERSAMPLING = BME680_OS_16X;
+  // bme.setHumidityOversampling(OVERSAMPLING);
+  // bme.setTemperatureOversampling(OVERSAMPLING);
+  // bme.setPressureOversampling(OVERSAMPLING);
+  // bme.setIIRFilterSize(BME680_FILTER_SIZE_7);
+  // bme.setODR(BME68X_ODR_1000_MS);
+  bme.setGasHeater(0, 0);
 #    endif
   Serial.println("BME setup done");
 }
@@ -156,7 +166,7 @@ uint32_t inVolt;
 
 // split into 2 packets? 'base' and 'extra'?
 #if W_BME_TYPE == W_BME_680
-#  define W_EXTRA_PACKET (1)
+#  define W_EXTRA_PACKET (0)
 auto extraPacket = SensorsPacketizer<GasSensor>();
 #endif
 
@@ -209,10 +219,10 @@ static int batteryVoltage() {
 }
 
 static void handle_read_sensor() {
+  status.last_read = micros();
   /* NOTE: We are using deepSleep so every iteration starts with setup() */
   inVolt = batteryVoltage();
 #if 0
-  Serial.println(__LINE__);
   /* USB powered: inVolt ~ 3000
    * We might want detect somehow if battery powered or USB powered
    * use GPIO jumper? */
@@ -231,13 +241,18 @@ static void handle_read_sensor() {
   replyPacketNew.set<HumiditySensor>(bme.readHumidity());
   replyPacketNew.set<VoltageSensor>(inVolt);
 #elif W_BME_TYPE == W_BME_680
+#  if W_BSEC
   bme.run();
+#  else
+  bme.performReading();
+#  endif
   replyPacketNew.set<TemperatureSensor>(bme.temperature);
   replyPacketNew.set<PressureSensor>(bme.pressure);
   replyPacketNew.set<HumiditySensor>(bme.humidity);
-  // For now ignore voltage
-  // replyPacketNew.set<VoltageSensor>(inVolt);
-  extraPacket.set<GasSensor>(GasSensor(
+// For now ignore voltage
+// replyPacketNew.set<VoltageSensor>(inVolt);
+#  if W_BSEC
+  extraPacket.set<GasSensor>(GasSensorStorage(
       bme.gasResistance, bme.iaq, bme.staticIaq, bme.co2Equivalent,
       // each value is from 0 to 2 -> mask 0x03 and is uses 2 bits
       // accuracy in order of emited fields
@@ -246,6 +261,10 @@ static void handle_read_sensor() {
       // 4, 5 - co2accuracy
       (bme.iaqAccuracy & 0x03) | ((bme.staticIaqAccuracy & 0x03) << 2) |
           ((bme.co2Accuracy & 0x03) << 4)));
+#  else
+  extraPacket.set<GasSensor>(
+      {static_cast<float>(bme.gas_resistance), 0, 0, 0, 0xFF});
+#  endif
 #endif
 
 #if W_SOIL_MOISTURE
@@ -254,24 +273,32 @@ static void handle_read_sensor() {
 #if W_VERBOSE
   printValues();
 #endif
+  status.last_read_end = micros();
 }
 
 static void handle_send_message() {
+  status.last_send = micros();
   // TODO(m): use extra only for BME680
-  static int counter = 0;
   int ret;
+#if W_EXTRA_PACKET
+  static int counter = 0;
   if ((counter++) & 0x1) {
     // send "extra"
     ret = radio_send_all(extraPacket.mBytes, sizeof(extraPacket.mBytes));
-  } else {
+  } else
+#endif
+  {
     // send "normal"
     ret = radio_send_all(replyPacketNew.mBytes, sizeof(replyPacketNew.mBytes));
   }
+
+  status.radio_send = ret;
 
   if (ret) {
     Serial.print("send finished: ");
     Serial.println(ret);
   }
+  status.last_send_end = micros();
 }
 
 static void printValues() {
@@ -307,23 +334,13 @@ static void printValues() {
   Serial.print(bme.humidity);
   Serial.println(" %");
 
-  // Serial.print("bVoc = ");
-  // Serial.print(bme.breathVocEquivalent);
-  // Serial.print(" acc ");
-  // Serial.print(bme.breathVocAccuracy);
-  // Serial.println();
+#  if W_BSEC
 
   Serial.print("co2 = ");
   Serial.print(bme.co2Equivalent);
   Serial.print(" acc ");
   Serial.print(bme.co2Accuracy);
   Serial.println();
-
-  // Serial.print("compgas = ");
-  // Serial.print(bme.compGasValue);
-  // Serial.print(" acc ");
-  // Serial.print(bme.compGasAccuracy);
-  // Serial.println();
 
   Serial.print("gas% = ");
   Serial.print(bme.gasPercentage);
@@ -354,6 +371,7 @@ static void printValues() {
   Serial.print(" acc ");
   Serial.print(bme.staticIaqAccuracy);
   Serial.println();
+#  endif
 #else
 #  error Whoops
 #endif
@@ -366,6 +384,8 @@ void setup() {
   setupLED();
   enableLED();
   Serial.begin(115200);
+  // btSerial.begin("wunsz");
+  // btSerial.register_callback
   // Serial.begin(9600);
   while (!Serial) {
     blink();
@@ -383,8 +403,33 @@ void setup() {
   Serial.print("WiFi IP: ");
   Serial.println(WiFi.softAPIP());
 
+  server.on("/restart", HTTP_GET, [](AsyncWebServerRequest *request) {
+    // radio_rfm69_reset_hacky_restart();
+    ESP.restart();
+    request->send(200, "text/plain", "should not see this");
+  });
+
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    request->send(200, "text/plain", "Go to /update");
+    const auto reading_took = status.last_read_end - status.last_read;
+    const auto sending_took = status.last_send_end - status.last_send;
+    String asd = "Go to /update \nCurrent time: ";
+    asd += micros();
+    asd += "\nLast read: ";
+    asd += status.last_read;
+    asd += " read took: ";
+    asd += reading_took;
+    asd += "\nLast send: ";
+    asd += status.last_send;
+    asd += " sending took: ";
+    asd += sending_took;
+    asd += " status init: ";
+    asd += status.radio_statue;
+    asd += " status send: ";
+    asd += status.radio_send;
+    asd += "\nWatchdog restarts: ";
+    // asd += radio_rfm69_watchdog_restarts();
+
+    request->send(200, "text/plain", asd);
   });
 
   AsyncElegantOTA.begin(&server);
@@ -394,7 +439,7 @@ void setup() {
   setupBME280();
 #endif
 
-  while (radio_setup()) {
+  while ((status.radio_statue = radio_setup())) {
 #if W_VERBOSE
     Serial.println("setup fialed");
 #endif
@@ -431,6 +476,11 @@ void loop() {
   delay(100);
 #  endif /* W_AC_TYPE */
 #else
-  scheduler.execute();
+  // scheduler.execute();
+  handle_read_sensor();
+  for (int i = 0; i < 2; ++i) {
+    handle_send_message();
+    delay(SEND_INTERVAL);
+  }
 #endif
 }
