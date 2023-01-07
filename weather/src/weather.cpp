@@ -106,11 +106,10 @@ static void checkStatus() {
 }
 #    else
 #      include <Adafruit_BME680.h> /* include Adafruit library for BMP280 sensor */
-#      define W_BME_ADDRESS 0x76
-// 119
-// Adafruit_BME680 bmex(SS, MOSI, MISO, SCK);
+// SPI
+Adafruit_BME680 bme(SS, MOSI, MISO, SCK);
 // I2C
-Adafruit_BME680 bme = {};
+// Adafruit_BME680 bme = {};
 #    endif
 static float waterSatDensity(float temp) {
   const auto rho_max = (6.112 * 100 * exp((17.62 * temp) / (243.12 + temp))) /
@@ -119,8 +118,8 @@ static float waterSatDensity(float temp) {
 }
 
 static void setupBME280() {
-  Serial.println("Enabling TheWire");
-  Wire.begin();
+  Serial.println("Enable BME SPI");
+  SPI.begin();
 #    if W_BSEC
   bme.begin(BME680_I2C_ADDR_SECONDARY, Wire);
   checkStatus();
@@ -151,6 +150,7 @@ static void setupBME280() {
   // bme.setPressureOversampling(OVERSAMPLING);
   // bme.setIIRFilterSize(BME680_FILTER_SIZE_7);
   // bme.setODR(BME68X_ODR_1000_MS);
+  // NOTE: humidity is ~10% HIGHER than it should be
   bme.setGasHeater(0, 0);
 #    endif
   Serial.println("BME setup done");
@@ -239,7 +239,7 @@ static void handle_read_sensor() {
   replyPacketNew.set<TemperatureSensor>(bme.readTemperature());
   replyPacketNew.set<PressureSensor>(bme.readPressure());
   replyPacketNew.set<HumiditySensor>(bme.readHumidity());
-  replyPacketNew.set<VoltageSensor>(inVolt);
+  // replyPacketNew.set<VoltageSensor>(inVolt);
 #elif W_BME_TYPE == W_BME_680
 #  if W_BSEC
   bme.run();

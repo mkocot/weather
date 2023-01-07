@@ -7,11 +7,40 @@ constexpr auto TX2 = 26;
 constexpr auto RX2 = 27;
 constexpr auto SET2 = 25;
 
+struct HC12_HDR {
+  // Version
+  struct {
+    uint8_t version_zero: 4; // reserved should be 0
+    uint8_t version: 4; // should be 1
+  };
+  // Packet specification for version 1
+  // Size
+  struct {
+    uint8_t size_zero: 2; // reserved should be 0
+    uint8_t size: 6; // 0..63
+  };
+  // Let's this surprise me, when i gonna need more more than 15 stations
+  // (1 for receiver and 14 for senders)
+  struct {
+    uint8_t packet_to: 4; // 0..15
+    uint8_t packet_from: 4; // 0..15
+  };
+};
+
+static_assert(std::is_trivial<HC12_HDR>::value, "Header is not trivial");
+static_assert(sizeof(HC12_HDR) == 3, "Header shoult be 3");
+
+constexpr auto MAX_PACKET_SIZE = 64;
+constexpr auto CRC_SIZE = 1;
+constexpr auto MAX_PAYLOAD_SIZE = MAX_PACKET_SIZE - sizeof(HC12_HDR) - CRC_SIZE;
+
+
 class HC12 {
   SoftwareSerial &mStream;
   uint8_t mSet_pin{255};
   bool mWaitForResponse{false};
-  uint8_t tmp[64] = {0}; // packet is 64 bytes long
+  uint8_t tmp[MAX_PACKET_SIZE] = {0}; // packet is 64 bytes long
+  uint8_t node_id{1};
 
   void enterCommandMode() { digitalWrite(mSet_pin, LOW); }
   void exitCommandMode() { digitalWrite(mSet_pin, HIGH); }
@@ -36,6 +65,13 @@ public:
       : mStream(stream), mSet_pin(set_pin) {
     pinMode(mSet_pin, OUTPUT);
     exitCommandMode();
+
+    auto hdr = reinterpret_cast<HC12_HDR*>(tmp);
+    memset(hdr, 0, sizeof(*hdr));
+
+    hdr->packet_from = node_id;
+    hdr->packet_to = 0xF;
+    hdr->version = 1;
   }
 
   int setChannel(uint8_t channel) {
@@ -62,32 +98,38 @@ public:
   int version() { return postCommand("AT+V", 4); }
 
   int send(const uint8_t *data, size_t len) {
-    // message is at most 62 bytes so 1 for length and 1 for crc
-    if (len > 62) {
+    // message is at most MAX_PAYLOAD_SIZE bytes
+    if (len > MAX_PAYLOAD_SIZE) {
       return 1;
     }
     if (mWaitForResponse) {
       return 1;
     }
-    // 2 bits unused, reserved
-    // so if anything is bigger than 63 it's not the start of message
-    tmp[0] = len & 0b00111111;
+    auto hdr = reinterpret_cast<HC12_HDR*>(tmp);
+    hdr->size = len;
+    auto index = sizeof(*hdr);
     // copy from 1 to len (both inclusive)
-    memcpy(tmp + 1, data, len);
+    memcpy(tmp + index, data, len);
+    index += len;
     // put CRC8 at len + 1
-    tmp[len + 1] = crc8(tmp, len + 1); // checksum (with length prefix)
+    // polynome: 0xD5 (DVB-S2), but descriptions incorecly states it's 0x8C
+    // (reversed 1-Wire)
+    tmp[index] = crc8(tmp, index); // checksum (with header)
+    ++index;
 
 #if W_VERBOSE
+    Serial.print("Total size: "); Serial.println(index);
     Serial.print("Raw data: ");
-    for (int i = 0; i < len + 2; i++) {
+    for (int i = 0; i < index; i++) {
       if (tmp[i] < 15) {
-        Serial.print(' ');
+        Serial.print('0');
       }
       Serial.print(tmp[i], 16);
+      Serial.print(' ');
     }
     Serial.println();
 #endif
-    mStream.write(tmp, len + 2);
+    mStream.write(tmp, index);
     mStream.flush();
     return 0;
   }
@@ -123,22 +165,9 @@ int radio_hc12_setup() {
   return 0;
 }
 
-int radio_hc12_send(const char *str) {
-  Serial.println("send justring");
-  hc2.loop();
-  // hc2.send(data, len);
-  // uint8_t[]d = {'h'};
-  // hc2.send(d, 10);
-  // hc2.send(str);
-  return 0;
-}
 int radio_hc12_send_all(const uint8_t *data, size_t len) {
-  Serial.println("send all");
   // just in case something is on wire (shouldn't)
   hc2.loop();
   hc2.send(data, len);
-  // uint8_t[]d = {'h'};
-  // hc2.send(d, 10);
-  // hc2.send("Hwllo world");
   return 0;
 }
