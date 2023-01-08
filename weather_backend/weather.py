@@ -330,7 +330,7 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
     def _try_parse(self):
         # 3 bytes header, 1 byte checksum
         if len(self.cache) < 4:
-            return False
+            return None
 
         for index in range(len(self.cache)):
             raw_version = self.cache[index]
@@ -366,7 +366,7 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
                 # no-go: packet from self to self?
                 continue
 
-            if index + 3 + size > len(self.cache):
+            if index + 3 + size >= len(self.cache):
                 # no-go packet would end after buffer
                 continue
 
@@ -379,7 +379,7 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
             # print("packet VALID")
             # roll buffer to left by packet size
             self.cache = self.cache[index + 3 + size + 1:]
-            return raw_payload
+            return bytes(raw_payload)
 
     def data_received(self, data):
         self.cache.extend(data)
