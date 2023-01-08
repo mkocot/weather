@@ -82,8 +82,22 @@ class HumiditySensor(SimpleFloat32):
     MODULE_ID = 0x03
 
 
-class PressureSensor(SimpleFloat32):
+class PressureSensor(BaseModule):
     MODULE_ID = 0x02
+
+    def __init__(self, value):
+        super().__init__()
+        self.value = value
+
+    @classmethod
+    def parse(cls, data):
+        fval = SimpleFloat32.parse(data[0:4])[0].value
+        uval = SimpleUint32.parse(data[0:4])[0].value
+        if fval < 30000 or fval > 120000:
+            value = uval
+        else:
+            value = fval
+        return cls(value), 4
 
 
 class ScreenSensor(BaseModule):

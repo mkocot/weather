@@ -204,9 +204,12 @@ class RRD:
                 data["time"] = []
             data["time"].append(timestamp)
             for i, n in index2name.items():
-                v = float(values[1 + i])
-                if math.isnan(v):
+                if values[1 + i] == 'nan':
                     v = None
+                else:
+                    v = float(values[1 + i])
+                    if math.isnan(v):
+                        v = None
                 data[n].append(v)
         return data
 
@@ -267,7 +270,7 @@ class RRD:
         if not ok:
             raise Exception("bazinga")
         desc = set()
-        for l in out.decode("utf-8").splitlines():
+        for l in out.splitlines():
             l = l
             if not l.startswith("ds["):
                 continue
