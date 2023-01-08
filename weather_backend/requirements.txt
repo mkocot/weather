@@ -3,6 +3,7 @@ asyncio-mqtt
 Pillow
 toml
 pyserial-asyncio
+libscrc
 
 # server
 quart
