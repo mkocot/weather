@@ -4,7 +4,7 @@
 #  include "config.hpp"
 
 /* will work fine util it dosn't with deadlock */
-#  if 0
+#  if W_BSEC
 
 #    include <bsec.h>
 

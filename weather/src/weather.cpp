@@ -11,7 +11,7 @@
 #include <WiFi.h>
 
 #undef W_SCHEDULER
-#define W_ScHEDULER (0)
+#define W_SCHEDULER (0)
 
 struct {
   time_t last_send{0};
@@ -23,7 +23,6 @@ struct {
 } status;
 
 AsyncWebServer server(80);
-#define W_BSEC (0)
 static void handle_read_sensor();
 static void handle_send_message();
 

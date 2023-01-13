@@ -59,6 +59,7 @@
 #define W_BME_680_SPI ((W_BME_680) | (W_BME_SPI))
 
 
+#define W_BSEC (0)
 
 #ifndef W_BME
 #define W_BME W_BME_OFF
@@ -70,6 +71,10 @@
 // Validate user supplied values
 #if !((W_BME_TYPE == W_BME_280) || (W_BME_TYPE == W_BME_680) || (W_BME_TYPE == W_BME_OFF))
 #error Invalid W_BME_TYPE (IC)
+#endif
+
+#if W_BSEC && W_BME_TYPE && (W_BME_TYPE != W_BME_680)
+#error BSEC supported only on BME680
 #endif
 
 #if !((W_BME_PROT == W_BME_SPI) || (W_BME_PROT == W_BME_I2C))
