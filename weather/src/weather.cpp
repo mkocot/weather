@@ -1,4 +1,5 @@
 
+#include "bme.hpp"
 #include "config.hpp"
 #include "radio.hpp"
 #include <TaskScheduler.h>
@@ -51,139 +52,39 @@ Task task_send_message(SEND_INTERVAL, TASK_FOREVER, handle_send_message,
 #endif
 
 #if W_BME_TYPE != W_BME_OFF
+#  if W_BME_PROT == W_BME_I2C
+BME bme = {};
+#  elif W_BME_PROT == W_BME_SPI
+BME bme(SS, MOSI, MISO, SCK);
+#  else
+#    error unknown protocol
+#  endif /* W_BME_PROT */
 
-#  if W_BME_TYPE == W_BME_280
-#    include <Adafruit_BME280.h> /* include Adafruit library for BMP280 sensor */
-#    if W_BME_PROT == W_BME_I2C
-#      define W_BME_ADDRESS BME280_ADDRESS_ALTERNATE
-Adafruit_BME280 bme;
 static void setupBME280() {
-  /* Enable i2c device (is this required?)
-   * SDA=GPIO4 (D2), SCL=GPIO0 (D3) */
-  Wire.begin(4, 0);
-  int sesnor_ok = bme.begin(W_BME_ADDRESS);
-#    else
-Adafruit_BME280 bme(SS, MOSI, MISO, SCK);
-static void setupBME280() {
-  /* Enable i2c device (is this required?)
-   * SDA=GPIO4 (D2), SCL=GPIO0 (D3) */
-  SPI.begin();
   int sesnor_ok = bme.begin();
-#    endif
 
   if (!sesnor_ok) {
-#    if W_VERBOSE
+#  if W_VERBOSE
     Serial.println("Could not find a valid BME280 sensor, check wiring!");
-#    endif
+#  endif /* W_VERBOSE */
     blink();
-#    if !W_DEBUG
+#  if !W_DEBUG
     exitError();
-#    endif
-  }
-
-  /* For more details on the following scenarious, see chapter
-   * 3.5 "Recommended modes of operation" in the datasheet */
-  bme.setSampling(Adafruit_BME280::MODE_FORCED,
-                  Adafruit_BME280::SAMPLING_X1, /* temperature */
-                  Adafruit_BME280::SAMPLING_X1, /* pressure */
-                  Adafruit_BME280::SAMPLING_X1, /* humidity */
-                  Adafruit_BME280::FILTER_OFF);
-}
-#  else
-#    if W_BSEC
-#      include <bsec.h>
-Bsec bme;
-static void checkStatus() {
-  if (bme.status != BSEC_OK) {
-    if (bme.status < BSEC_OK) {
-      auto output = "BSEC error code : " + String(bme.status);
-      Serial.println(output);
-      // for (;;)
-      //   errLeds(); /* Halt in case of failure */
-    } else {
-      auto output = "BSEC warning code : " + String(bme.status);
-      Serial.println(output);
-    }
-  }
-
-  if (bme.bme680Status != BME680_OK) {
-    if (bme.bme680Status < BME680_OK) {
-      auto output = "BME680 error code : " + String(bme.bme680Status);
-      Serial.println(output);
-      // for (;;)
-      //   errLeds(); /* Halt in case of failure */
-    } else {
-      auto output = "BME680 warning code : " + String(bme.bme680Status);
-      Serial.println(output);
-    }
+#  endif /* !W_DEBUG */
   }
 }
-#    else
-#      include <Adafruit_BME680.h> /* include Adafruit library for BMP280 sensor */
-// MOSI -> SDI/SDA
-// MISO -> SDO
-// SPI
-// Adafruit_BME680 bme(SS, MOSI, MISO, SCK);
-// I2C
-// Adafruit_BME680 bme = {};
-#    endif
+
 static float waterSatDensity(float temp) {
   const auto rho_max = (6.112 * 100 * exp((17.62 * temp) / (243.12 + temp))) /
                        (461.52 * (temp + 273.15));
   return rho_max;
 }
 
-static void setupBME280() {
-  Serial.println("Enable BME SPI");
-  SPI.begin();
-  // SPI.begin(SCK, MISO, MOSI, SS);
-#    if W_BSEC
-  bme.begin(BME680_I2C_ADDR_SECONDARY, Wire);
-  checkStatus();
-  bsec_virtual_sensor_t sensor_list[] = {
-      // BSEC_OUTPUT_RAW_TEMPERATURE,
-      // BSEC_OUTPUT_RAW_PRESSURE,
-      // BSEC_OUTPUT_RAW_HUMIDITY,
-      BSEC_OUTPUT_RAW_PRESSURE,
-      BSEC_OUTPUT_RAW_GAS,
-      BSEC_OUTPUT_IAQ,        /* so this is somehow scalled ? */
-      BSEC_OUTPUT_STATIC_IAQ, /* unscalled */
-      BSEC_OUTPUT_CO2_EQUIVALENT,
-      // BSEC_OUTPUT_BREATH_VOC_EQUIVALENT,
-      BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_TEMPERATURE,
-      BSEC_OUTPUT_SENSOR_HEAT_COMPENSATED_HUMIDITY,
-  };
-  bme.updateSubscription(sensor_list,
-                         sizeof(sensor_list) / sizeof(bsec_virtual_sensor_t),
-                         BSEC_SAMPLE_RATE_ULP);
-  checkStatus();
-  // bsec.setConfig
-#    else
-  // WARNING: bme680 using Adafruit library has SKEWED temperature reading
-  bme.begin();
-  bme.setSampling(Adafruit_BME280::MODE_FORCED,
-                  Adafruit_BME280::SAMPLING_X1, /* temperature */
-                  Adafruit_BME280::SAMPLING_X1, /* pressure */
-                  Adafruit_BME280::SAMPLING_X1, /* humidity */
-                  Adafruit_BME280::FILTER_OFF);
-  // Using oversampling will invalidate temperature (sometimes overshot by 10*C)
-  // const constexpr auto OVERSAMPLING = BME680_OS_16X;
-  // bme.setHumidityOversampling(OVERSAMPLING);
-  // bme.setTemperatureOversampling(OVERSAMPLING);
-  // bme.setPressureOversampling(OVERSAMPLING);
-  // bme.setIIRFilterSize(BME680_FILTER_SIZE_7);
-  // bme.setODR(BME68X_ODR_1000_MS);
-  // NOTE: humidity is ~10% HIGHER than it should be
-  // bme.setGasHeater(0, 0);
-#    endif
-  Serial.println("BME setup done");
-}
-#  endif /* W_BME_TYPE */
-#endif   /* W_BME_TYPE != W_BME_OFF */
+#endif /* W_BME_TYPE != W_BME_OFF */
 
 #if ESP8266 && !W_SOIL_MOISTURE
 ADC_MODE(ADC_VCC); /* init input voltage mesure */
-#endif
+#endif /* ESP8266 && !W_SOIL_MOISTURE */
 
 uint32_t inVolt;
 
@@ -230,8 +131,6 @@ static int readSoilMoisture() {
 
 static void printValues();
 
-static void sendValues();
-
 static int batteryVoltage() {
 #if W_SOIL_MOISTURE
   return 0;
@@ -261,24 +160,10 @@ static void handle_read_sensor() {
   replyPacketNew.set<VoltageSensor>(inVolt);
 #endif
 
-#if W_BME_TYPE == W_BME_280
-  /* Only needed in forced mode! In normal mode, you can remove the next line.
-   */
-  bme.takeForcedMeasurement();
+bme.measure();
   replyPacketNew.set<TemperatureSensor>(bme.readTemperature());
   replyPacketNew.set<PressureSensor>(bme.readPressure());
   replyPacketNew.set<HumiditySensor>(bme.readHumidity());
-#elif W_BME_TYPE == W_BME_680
-#  if W_BSEC
-  bme.run();
-#  else
-  bme.performReading();
-#  endif
-  replyPacketNew.set<TemperatureSensor>(bme.temperature);
-  replyPacketNew.set<PressureSensor>(bme.pressure);
-  replyPacketNew.set<HumiditySensor>(bme.humidity);
-// For now ignore voltage
-// replyPacketNew.set<VoltageSensor>(inVolt);
 #  if W_BSEC
   extraPacket.set<GasSensor>(GasSensorStorage(
       bme.gasResistance, bme.iaq, bme.staticIaq, bme.co2Equivalent,
@@ -289,15 +174,14 @@ static void handle_read_sensor() {
       // 4, 5 - co2accuracy
       (bme.iaqAccuracy & 0x03) | ((bme.staticIaqAccuracy & 0x03) << 2) |
           ((bme.co2Accuracy & 0x03) << 4)));
-#  else
-  extraPacket.set<GasSensor>(
-      {static_cast<float>(bme.gas_resistance), 0, 0, 0, 0xFF});
-#  endif
-#endif
+  // extraPacket.set<GasSensor>(
+      // {static_cast<float>(bme.gas_resistance), 0, 0, 0, 0xFF});
+#endif /* W_BSEC */
 
 #if W_SOIL_MOISTURE
   replyPacketNew.set<SoilMoisture>(readSoilMoisture());
 #endif
+
 #if W_VERBOSE
   printValues();
 #endif
@@ -330,7 +214,7 @@ static void handle_send_message() {
 }
 
 static void printValues() {
-#if W_BME_TYPE == W_BME_280
+#if W_BME_TYPE != W_BME_OFF
   Serial.print("Temperature = ");
   Serial.print(bme.readTemperature());
   Serial.println(" *C");
@@ -347,21 +231,6 @@ static void printValues() {
   Serial.print("inVolt = ");
   Serial.print(inVolt);
   Serial.println(" mV");
-
-#elif W_BME_TYPE == W_BME_680
-  Serial.print("Temperature = ");
-  Serial.print(bme.temperature);
-  Serial.println(" *C");
-
-  Serial.print("Pressure = ");
-
-  Serial.print(bme.pressure / 100.0F);
-  Serial.println(" hPa");
-
-  Serial.print("Humidity = ");
-  Serial.print(bme.humidity);
-  Serial.println(" %");
-
 #  if W_BSEC
 
   Serial.print("co2 = ");
@@ -399,10 +268,8 @@ static void printValues() {
   Serial.print(" acc ");
   Serial.print(bme.staticIaqAccuracy);
   Serial.println();
-#  endif
-#else
-#  error Whoops
-#endif
+#  endif /* W_BSEC */
+#endif /* W_BME_TYPE != W_BME_OFF */
   Serial.println();
 }
 
@@ -463,9 +330,7 @@ void setup() {
   AsyncElegantOTA.begin(&server);
   server.begin();
 
-#if W_BME_TYPE != W_BME_OFF
   setupBME280();
-#endif
 
   while ((status.radio_statue = radio_setup())) {
 #if W_VERBOSE
