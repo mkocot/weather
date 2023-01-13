@@ -9,6 +9,9 @@
 #include <ESPAsyncWebServer.h>
 #include <WiFi.h>
 
+#undef W_SCHEDULER
+#define W_ScHEDULER (0)
+
 struct {
   time_t last_send{0};
   time_t last_send_end{0};
@@ -23,19 +26,21 @@ AsyncWebServer server(80);
 static void handle_read_sensor();
 static void handle_send_message();
 
-// Read sensor once per 5 minutes (if 680) or 10minutes (if 280)
+// Read sensor (ms) once per 1 minute (if directly powered) or 10minutes (if
+// battery poweered)
 const constexpr auto READ_INTERVAL =
-    W_BME_TYPE == W_BME_680 ? 300000 : W_REPORT_INTERVAL / 1000;
-// send interval is equal to read interval on 280, or 1min on 680
-const constexpr auto SEND_INTERVAL =
-    W_BME_TYPE == W_BME_680 ? READ_INTERVAL / 2 : READ_INTERVAL;
+    W_AC_TYPE == W_AC_DIRECT ? 60000 : W_REPORT_INTERVAL / 1000;
+// send interval (ms) is equal to read interval on 280, or 1min on 680
+const constexpr auto SEND_INTERVAL = READ_INTERVAL;
+// W_BME_TYPE == W_BME_680 ? READ_INTERVAL / 2 : READ_INTERVAL;
 
+#if W_SCHEDULER
 Scheduler scheduler;
 Task task_read_sensor(READ_INTERVAL, TASK_FOREVER, handle_read_sensor,
                       &scheduler, true);
-// Send message once overy 2minutes
 Task task_send_message(SEND_INTERVAL, TASK_FOREVER, handle_send_message,
                        &scheduler, true);
+#endif
 
 #if W_DEBUG
 #  define DPRINT(x) Serial.print(x)
@@ -49,14 +54,23 @@ Task task_send_message(SEND_INTERVAL, TASK_FOREVER, handle_send_message,
 
 #  if W_BME_TYPE == W_BME_280
 #    include <Adafruit_BME280.h> /* include Adafruit library for BMP280 sensor */
-#    define W_BME_ADDRESS BME280_ADDRESS_ALTERNATE
+#    if W_BME_PROT == W_BME_I2C
+#      define W_BME_ADDRESS BME280_ADDRESS_ALTERNATE
 Adafruit_BME280 bme;
-
 static void setupBME280() {
   /* Enable i2c device (is this required?)
    * SDA=GPIO4 (D2), SCL=GPIO0 (D3) */
   Wire.begin(4, 0);
   int sesnor_ok = bme.begin(W_BME_ADDRESS);
+#    else
+Adafruit_BME280 bme(SS, MOSI, MISO, SCK);
+static void setupBME280() {
+  /* Enable i2c device (is this required?)
+   * SDA=GPIO4 (D2), SCL=GPIO0 (D3) */
+  SPI.begin();
+  int sesnor_ok = bme.begin();
+#    endif
+
   if (!sesnor_ok) {
 #    if W_VERBOSE
     Serial.println("Could not find a valid BME280 sensor, check wiring!");
@@ -106,8 +120,10 @@ static void checkStatus() {
 }
 #    else
 #      include <Adafruit_BME680.h> /* include Adafruit library for BMP280 sensor */
+// MOSI -> SDI/SDA
+// MISO -> SDO
 // SPI
-Adafruit_BME680 bme(SS, MOSI, MISO, SCK);
+// Adafruit_BME680 bme(SS, MOSI, MISO, SCK);
 // I2C
 // Adafruit_BME680 bme = {};
 #    endif
@@ -120,6 +136,7 @@ static float waterSatDensity(float temp) {
 static void setupBME280() {
   Serial.println("Enable BME SPI");
   SPI.begin();
+  // SPI.begin(SCK, MISO, MOSI, SS);
 #    if W_BSEC
   bme.begin(BME680_I2C_ADDR_SECONDARY, Wire);
   checkStatus();
@@ -142,7 +159,13 @@ static void setupBME280() {
   checkStatus();
   // bsec.setConfig
 #    else
+  // WARNING: bme680 using Adafruit library has SKEWED temperature reading
   bme.begin();
+  bme.setSampling(Adafruit_BME280::MODE_FORCED,
+                  Adafruit_BME280::SAMPLING_X1, /* temperature */
+                  Adafruit_BME280::SAMPLING_X1, /* pressure */
+                  Adafruit_BME280::SAMPLING_X1, /* humidity */
+                  Adafruit_BME280::FILTER_OFF);
   // Using oversampling will invalidate temperature (sometimes overshot by 10*C)
   // const constexpr auto OVERSAMPLING = BME680_OS_16X;
   // bme.setHumidityOversampling(OVERSAMPLING);
@@ -151,7 +174,7 @@ static void setupBME280() {
   // bme.setIIRFilterSize(BME680_FILTER_SIZE_7);
   // bme.setODR(BME68X_ODR_1000_MS);
   // NOTE: humidity is ~10% HIGHER than it should be
-  bme.setGasHeater(0, 0);
+  // bme.setGasHeater(0, 0);
 #    endif
   Serial.println("BME setup done");
 }
@@ -173,10 +196,10 @@ auto extraPacket = SensorsPacketizer<GasSensor>();
 auto replyPacketNew = SensorsPacketizer<
 #if W_BME_TYPE
     PressureSensor, HumiditySensor, TemperatureSensor
-#  if W_BME_TYPE == W_BME_280
+#  if W_AC_TYPE == W_AC_BATTERY
     ,
     VoltageSensor
-#  endif /* W_BME_TYPE == W_BME_280 */
+#  endif /* W_AC_TYPE == W_AC_BATTERY */
 #endif   /* W_BME_TYPE */
 #if W_SOIL_MOISTURE
 #  if W_BME_TYPE
@@ -186,6 +209,7 @@ auto replyPacketNew = SensorsPacketizer<
 #endif
     >();
 
+#if W_SOIL_MOUSTURE
 static int readSoilMoisture();
 static int readSoilMoisture() {
   const constexpr auto IN_AIR = 645.0F;
@@ -202,6 +226,7 @@ static int readSoilMoisture() {
   const auto moistureLevel = map(analogValue, IN_AIR, IN_WATER, 0, 100);
   return constrain(moistureLevel, 0, 100);
 }
+#endif
 
 static void printValues();
 
@@ -232,6 +257,10 @@ static void handle_read_sensor() {
   }
 #endif
 
+#if W_AC_TYPE == W_BATTERY
+  replyPacketNew.set<VoltageSensor>(inVolt);
+#endif
+
 #if W_BME_TYPE == W_BME_280
   /* Only needed in forced mode! In normal mode, you can remove the next line.
    */
@@ -239,7 +268,6 @@ static void handle_read_sensor() {
   replyPacketNew.set<TemperatureSensor>(bme.readTemperature());
   replyPacketNew.set<PressureSensor>(bme.readPressure());
   replyPacketNew.set<HumiditySensor>(bme.readHumidity());
-  // replyPacketNew.set<VoltageSensor>(inVolt);
 #elif W_BME_TYPE == W_BME_680
 #  if W_BSEC
   bme.run();
@@ -453,9 +481,12 @@ void setup() {
   extraPacket.setId(device_id);
 #endif
 
+#if W_SCHEDULER
   scheduler.startNow();
+#endif
   disableLED();
 }
+
 void loop() {
   // TODO(m): Invoke directly when battery powered
 #if 0
@@ -476,11 +507,8 @@ void loop() {
   delay(100);
 #  endif /* W_AC_TYPE */
 #else
-  // scheduler.execute();
   handle_read_sensor();
-  for (int i = 0; i < 2; ++i) {
-    handle_send_message();
-    delay(SEND_INTERVAL);
-  }
+  handle_send_message();
+  delay(SEND_INTERVAL);
 #endif
 }

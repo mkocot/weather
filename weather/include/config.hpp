@@ -39,22 +39,41 @@
 
 #define W_NOOP do {} while(0)
 
-#define VOLT_THRESHOLD 2000
+#define VOLT_THRESHOLD  (2000)
 /* Interval in us: 600s (10m) */
-#define W_REPORT_INTERVAL 600000000
+#define W_REPORT_INTERVAL (600000000)
 /* Interval in us: 60s (1m) */
-#define W_ERROR_SLEEP_INTERVAL 60000000
+#define W_ERROR_SLEEP_INTERVAL (60000000)
 
-#define W_BME_OFF (0)
-#define W_BME_280 (280)
-#define W_BME_680 (680)
+/* reserver 2 bits for protocol */
+#define W_BME_PROT_MASK (0x00000003)
+#define W_BME_IC_MASK (0xFFFF0000)
+#define W_BME_SPI (0x00000001)
+#define W_BME_I2C (0x00000000)
 
-#ifndef W_BME_TYPE
-#define W_BME_TYPE W_BME_OFF
+#define W_BME_OFF (0x00000000)
+#define W_BME_280 (0x28000000)
+#define W_BME_680 (0x68000000)
+
+#define W_BME_280_SPI ((W_BME_280) | (W_BME_SPI))
+#define W_BME_680_SPI ((W_BME_680) | (W_BME_SPI))
+
+
+
+#ifndef W_BME
+#define W_BME W_BME_OFF
 #endif
 
-#if W_BME_TYPE != W_BME_280 && W_BME_TYPE != W_BME_680 && W_BME_TYPE != W_BME_OFF
-#error Invalid W_BME_TYPE
+#define W_BME_TYPE ((W_BME) & (W_BME_IC_MASK))
+#define W_BME_PROT ((W_BME) & (W_BME_PROT_MASK))
+
+// Validate user supplied values
+#if !((W_BME_TYPE == W_BME_280) || (W_BME_TYPE == W_BME_680) || (W_BME_TYPE == W_BME_OFF))
+#error Invalid W_BME_TYPE (IC)
+#endif
+
+#if !((W_BME_PROT == W_BME_SPI) || (W_BME_PROT == W_BME_I2C))
+#error Invalid W_BME_TYPE (PROT)
 #endif
 
 #define W_AC_BATTERY (1)
@@ -64,7 +83,7 @@
 #define W_AC_TYPE W_AC_BATTERY
 #endif
 
-#if W_AC_TYPE != W_AC_BATTERY && W_AC_TYPE != W_AC_DIRECT
+#if !(W_AC_TYPE == W_AC_BATTERY || W_AC_TYPE == W_AC_DIRECT)
 #error Invalid W_AC_TYPE
 #endif
 
@@ -85,12 +104,12 @@ static void setupLED() {
 }
 
 static void enableLED() {
-  const constexpr auto LED_ON = ESP32 ? HIGH : LOW;
+  constexpr auto LED_ON = ESP32 ? HIGH : LOW;
   digitalWrite(LED_BUILTIN, LED_ON);
 }
 
 static void disableLED() {
-  const constexpr auto LED_OFF = ESP32 ? LOW : HIGH;
+  constexpr auto LED_OFF = ESP32 ? LOW : HIGH;
   digitalWrite(LED_BUILTIN, LED_OFF);
 }
 #else
