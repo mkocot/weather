@@ -4,6 +4,10 @@ Pillow
 toml
 pyserial-asyncio
 libscrc
+# pin duckdb version, as database format is NOT stable
+# across releases (until 1.0 hits)
+# for now keep using sqlite
+# duckdb == 0.7.1
 
 # server
-quart
+bottle
