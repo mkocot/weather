@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 import argparse
-import asyncio
-import datetime
-import sys
 import time
+import datetime
+import json
+from pathlib import Path
 
-import quart
+import bottle
 
 import fetch
 
@@ -15,27 +15,25 @@ parser.add_argument("--static-dir", default=".")
 parser.add_argument("--data-dir", default=".")
 args = parser.parse_args()
 
+static_dir = Path(args.static_dir) / 'web/graph'
 
-app = quart.Quart(__name__, static_url_path='', static_folder=args.static_dir)
-
-
-def get_rrd() -> fetch.RRD:
-    return fetch.RRD(args.data_dir)
+def get_rrd() -> fetch.SQLiteDB:
+    return fetch.SQLiteDB(args.data_dir)
 
 
-@app.route("/<name>")
-async def serve_static(name):
-    return await quart.send_from_directory('web/graph', name)
+@bottle.get("/<name>")
+def serve_static(name):
+    return bottle.static_file(name, static_dir)
 
 
-@app.route("/")
-async def index():
-    return await quart.send_from_directory("web/graph", 'index.html')
+@bottle.get("/")
+def index():
+    return bottle.static_file('index.html', static_dir)
 
 
-@app.route("/data/<id>/last.json")
-async def data_last(id: str):
-    data = await get_rrd().lastupdate(id)
+@bottle.get("/data/<id>/last.json")
+def data_last(id: str):
+    data = get_rrd().lastupdate(id)
     return data
 
 
@@ -74,17 +72,17 @@ def filter_data(data):
     return data
 
 
-async def _last_from_sensors(rrd, sensors):
-    result = asyncio.gather(*[rrd.last(x) for x in sensors])
-    lasts = max([x for x in await result if x])
+def _last_from_sensors(rrd, sensors):
+    result = [rrd.last(x) for x in sensors]
+    lasts = max([x for x in result if x])
     if not lasts:
         lasts = 0
     return datetime.datetime.fromtimestamp(lasts, tz=datetime.timezone.utc)
 
 
-async def _data_from_sensors(rrd, sensors):
+def _data_from_sensors(rrd, sensors):
     result = {}
-    datas = await asyncio.gather(*[rrd.rrdfetch(x) for x in sensors])
+    datas = [rrd.rrdfetch(x) for x in sensors]
 
     for idx in range(len(sensors)):
         s = sensors[idx]
@@ -106,17 +104,24 @@ async def _data_from_sensors(rrd, sensors):
     return result
 
 
-@app.route("/data.json")
-async def data():
+@bottle.get("/data.json")
+def data():
     rrd = get_rrd()
     # ec62609d4998 - outside
     sensors = ["e09806259a66", "24a1603048ba", "ec62609d4998"]
-    last = await _last_from_sensors(rrd, sensors)
-    ims = quart.request.if_modified_since
-    if ims and ims >= last:
-        return "Unchanged", 304
+    last = _last_from_sensors(rrd, sensors)
+    lm = last.strftime("%a, %d %b %Y %H:%M:%S GMT")
+    ims = bottle.request.environ.get('HTTP_IF_MODIFIED_SINCE')
+    if ims:
+        ims = bottle.parse_date(ims.split(";")[0].strip())
 
-    resp = await _data_from_sensors(rrd, sensors)
+    if ims is not None and ims >= last.timestamp():
+        headers = {
+            'Last-Modified': lm
+        }
+        return bottle.HTTPResponse(status=304, **headers)
+
+    resp = _data_from_sensors(rrd, sensors)
 
     # debug compare clocks
     clock_data = None
@@ -127,22 +132,17 @@ async def data():
         if clock_data != resp[s]["clock"]:
             print("diff", s, clock_data, resp[s]["clock"])
     resp["clock"] = clock_data
-
-    response = quart.jsonify(resp)
-    response.last_modified = last
-
-    return response
+    resp = json.dumps(resp)
+    headers = {
+        'Content-Length': len(resp),
+    }
+    return bottle.HTTPResponse(resp, **headers)
 
 
 def main():
     host, port = args.address.split(":")
     # privide loop, for old version of python
-    if sys.version_info < (3, 10, 0):
-        loop = asyncio.get_event_loop()
-    else:
-        loop = None
-
-    app.run(host=host, port=int(port), loop=loop)
+    bottle.run(host=host, port=int(port), debug=True, quiet=False)
 
 
 main()
