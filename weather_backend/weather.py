@@ -13,7 +13,6 @@ from os import mkdir
 from os.path import exists, isdir
 
 import serial_asyncio
-from asyncio_mqtt import Client
 import libscrc
 
 import draw
@@ -22,6 +21,12 @@ import protocol
 from config import load_config
 from protocol import (HumiditySensor, PressureSensor, SoilMoistureSensor,
                       TempSensor, VOCSensor, VoltSensor)
+
+USE_MQTT = False
+
+if USE_MQTT:
+    from asyncio_mqtt import Client
+
 
 stype2name = {
     TempSensor.MODULE_ID: ('temperature', fetch.Temp),
@@ -45,7 +50,7 @@ if not isdir(storage_path):
     print(f'rrd path is not directory: {storage_path}')
     exit(1)
 
-RRD = fetch.RRD(storage_path)
+RRD = fetch.SQLiteDB(storage_path, ro=True)
 
 
 class ScreenInfo:
@@ -174,8 +179,9 @@ class WeatherProcessor:
         self.mqtt = None
         # hold active devices, prune if timeout is larger than 30min
         self.sensors = {}
-        asyncio.run_coroutine_threadsafe(
-            self._prepare_mqtt(), asyncio.get_running_loop())
+        if USE_MQTT:
+            asyncio.run_coroutine_threadsafe(
+                self._prepare_mqtt(), asyncio.get_running_loop())
 
     def _prepare_socket(self):
         MCAST_GRP = '239.87.84.82'  # (239.W.T.R)
@@ -195,24 +201,26 @@ class WeatherProcessor:
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
         return sock
 
-    async def _prepare_mqtt(self):
-        mqtt_cfg = self.cfg.get('mqtt')
-        if not mqtt_cfg:
-            print('no MQTT config')
-            return
+    if USE_MQTT:
+        async def _prepare_mqtt(self):
+            mqtt_cfg = self.cfg.get('mqtt')
+            if not mqtt_cfg:
+                print('no MQTT config')
+                return
 
-        broker = mqtt_cfg.get('broker')
-        if not broker:
-            print('no broker configured')
-            return
+            broker = mqtt_cfg.get('broker')
+            if not broker:
+                print('no broker configured')
+                return
 
-        self.mqtt = Client(hostname=broker, client_id='Weather-Backend')
-        ok = await self.mqtt.connect()
+            self.mqtt = Client(hostname=broker, client_id='Weather-Backend')
+            ok = await self.mqtt.connect()
 
-        return ok
+            return ok
 
     async def run(self):
         # 1) connect to broker
+        # udp_task = file_receiver(self) 
         udp_task = udp_receiver(self)
         uart_task = uart_receiver(self)
         screen_task = screen_sender(self)
@@ -254,13 +262,14 @@ class WeatherProcessor:
             else:
                 print(f'Unknown module: {sid.MODULE_ID}')
 
-        await RRD.add(df.device_id, sensors.values())
+        RRD.add(df.device_id, sensors.values())
 
         # broadcast
-        await self.mqtt.publish(topic='weather/device', payload=df.device_id)
-        for k, v in sensors.items():
-            topic = f'weather/{df.device_id}/{k}'
-            await self.mqtt.publish(topic=topic, payload=v)
+        if USE_MQTT:
+            await self.mqtt.publish(topic='weather/device', payload=df.device_id)
+            for k, v in sensors.items():
+                topic = f'weather/{df.device_id}/{k}'
+                await self.mqtt.publish(topic=topic, payload=v)
 
         if DEBUG:
             sensors['rcvtime'] = rcvtime
@@ -425,6 +434,19 @@ async def udp_receiver(patocol):
     transport.close()
     sock.close()
     print('boom')
+
+async def file_receiver(patocol):
+    loop = asyncio.get_running_loop()
+    emergency_stop = loop.create_future()
+    prot = WeaterServerProtocol(emergency_stop, patocol)
+
+    with open('/home/nfinity/git/weather/packets.pkt') as f:
+        for line in f:
+            data = int(line, 16).to_bytes(32, 'big')
+            prot.datagram_received(data, ('127.0.0.1', 6969))
+    await emergency_stop
+    
+
 
 
 async def uart_receiver(patocol):
