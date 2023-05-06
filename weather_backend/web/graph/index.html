@@ -121,31 +121,46 @@
           fill: "rgba(128, 64, 64, 0.3)",
           unit: "V",
           stroke: "gray",
+	  resolution: 2,
           fetch: default_fetch("volt"),
           customize: (o) => {
             o.series.splice(3, 1);
 	        }
-        },
-        {
-          title: "Air Quality Index",
-          fill: "rgba(64, 64, 64, 0.3)",
-          unit: "",
-          stroke: "navy",
-          fetch: () => [timepoints, data[sensoridOut]["siaq"], 
-           data[sensoridOut]["iaq"],    data[sensoridOut]["iaq"]],
-          customize: (o) => {
-            o.series[1].label = "Static IAQ";
-            o.series[2].label = "IAQ";
-            o.series.splice(3, 1);
-          }
-        }
+        }//,
+        //{
+        //  title: "Air Quality Index",
+        //  fill: "rgba(64, 64, 64, 0.3)",
+        //  unit: "",
+        //  stroke: "navy",
+        //  fetch: () => [timepoints, data[sensoridOut]["siaq"], 
+        //   data[sensoridOut]["iaq"],    data[sensoridOut]["iaq"]],
+        //  customize: (o) => {
+        //    o.series[1].label = "Static IAQ";
+        //    o.series[2].label = "IAQ";
+        //    o.series.splice(3, 1);
+        //  }
+        //}
       ];
+      let _spline = uPlot.paths.spline();
+      let _mooSync = uPlot.sync("moo")
+      const matchSyncKeys = (own, ext) => own == ext;
       let opts = {
         title: "Temp [°C]",
         id: "chart1",
         class: "my-chart",
         width: width,
         height: 200,
+        cursor: {
+          lock: true,
+          //focus: {
+          //  prox: 16
+          //},
+          sync: {
+            key: _mooSync.key,
+            setSeries: true,
+            match: [matchSyncKeys, matchSyncKeys, matchSyncKeys],
+          }
+        },
         scales: {
           "V": {
             auto: false,
@@ -163,6 +178,7 @@
             // in-legend display
             label: "Sensor 1",
             stroke: "black",
+	    paths: _spline,
 
             // series style
            // stroke: "red",
@@ -172,6 +188,7 @@
             show: true,
             spanGaps: false,
             stroke: "gray",
+	    paths: _spline,
             value: (self, rawValue) => self.series[1].value(self, rawValue),
             fill: (self, idx) => {return self.series[1].fill},
           },
@@ -180,6 +197,7 @@
             show: true,
             spanGaps: true,
             stroke: "brown",
+	    paths: _spline,
             value: (self, rawValue) => self.series[1].value(self, rawValue),
             fill: (self, idx) => {return self.series[1].fill},
           }
@@ -207,6 +225,7 @@
         copts.series[1].value = (self, rawValue) => !rawValue && "??" || rawValue.toFixed(resolution) + cfg.unit;
         cfg.customize && cfg.customize(copts);
         var uplot = new uPlot(copts, series_data, document.body);
+        _mooSync.sub(uplot);
       })
     };
     xmlhttp.open("GET", url, true);
