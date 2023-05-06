@@ -373,7 +373,7 @@ if ENABLE_DUCK_DB:
             data = list(data)
 
             keys = ','.join(["timestamp"] + [f'"{d.DS_NAME}"' for d in data])
-            vals = [current_time] + [d.value for d in data]
+            vals = [current_time.timestamp()] + [d.value for d in data]
             placeholders = ','.join(['?'] * (len(data) + 1))
 
             sql = f"""
