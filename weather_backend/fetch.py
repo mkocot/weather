@@ -179,7 +179,7 @@ class SQLiteDB:
             avg("temp") AS "temp",
             avg("hum") AS "hum",
             avg("pres") AS "pres",
-            avg("volt") AS  "volt"
+            min("volt") AS  "volt"
         FROM
         (
             WITH RECURSIVE
