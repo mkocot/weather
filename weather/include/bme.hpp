@@ -25,6 +25,9 @@ using BME = BME680;
 #elif W_BME_TYPE == W_BME_OFF
 /* TODO: what should it be on off */
 using BME = void;
+#elif W_BME_TYPE == W_BME_TUNNEL
+#include <bme_tunnel.hpp>
+using BME = BmeTunnel;
 #else
 #  error Unexpected type
 #endif /* W_BME_TYPE */

@@ -1,17 +1,20 @@
-
 #include "bme.hpp"
 #include "config.hpp"
 #include "radio.hpp"
 #include <TaskScheduler.h>
 #include <wtocol.hpp>
 
-#include <AsyncElegantOTA.h>
+#include <ElegantOTA.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <WiFi.h>
 
 #undef W_SCHEDULER
 #define W_SCHEDULER (0)
+// Check before release
+//                    (TX, RX)
+// HardwareSerial1 -> (MOSI:23, MISO:19) [sensor]
+// HardwareSerial2 -> (27, 26) [hc12]
 
 struct {
   time_t last_send{0};
@@ -54,6 +57,11 @@ Task task_send_message(SEND_INTERVAL, TASK_FOREVER, handle_send_message,
 #  if W_BME_PROT == W_BME_I2C
 BME bme = {};
 #  elif W_BME_PROT == W_BME_SPI
+// PIN  ALT ESP32
+// SS       5
+// MOSI RX  23
+// MISO TX  19
+// SCK      18
 BME bme(SS, MOSI, MISO, SCK);
 #  else
 #    error unknown protocol
@@ -326,7 +334,7 @@ void setup() {
     request->send(200, "text/plain", asd);
   });
 
-  AsyncElegantOTA.begin(&server);
+  ElegantOTA.begin(&server);
   server.begin();
 
   setupBME280();
@@ -352,27 +360,30 @@ void setup() {
 }
 
 void loop() {
-  // TODO(m): Invoke directly when battery powered
-#if 0
+#if W_AC_TYPE == W_AC_DIRECT
+  // Since AsyncElegantOTA is discontinueat, we have to succumb
+  // to ElegantOTA, but it requires that loop is called to
+  // execute scheduled reboot.. bleh
+  static unsigned long next_probe = 0;
+
+  auto now = millis();
+
+  if (now > next_probe)
+  {
     handle_read_sensor();
     handle_send_message();
 
-#  if W_AC_TYPE == W_AC_DIRECT
-#    if W_BME_TYPE == W_BME_680
-  delay(299000);
-#    else
-  delayMicroseconds(W_REPORT_INTERVAL);
-#    endif
-#  else
-#    if W_VERBOSE
-  Serial.println("going into deep sleep mode");
-#    endif
-  ESP.deepSleep(W_REPORT_INTERVAL);
-  delay(100);
-#  endif /* W_AC_TYPE */
+    next_probe = now + SEND_INTERVAL;
+  }
+
+  ElegantOTA.loop();
 #else
   handle_read_sensor();
   handle_send_message();
-  delay(SEND_INTERVAL);
+#  if W_VERBOSE
+  Serial.println("going into deep sleep mode");
+#  endif
+  ESP.deepSleep(W_REPORT_INTERVAL);
 #endif
+  delay(100);
 }
