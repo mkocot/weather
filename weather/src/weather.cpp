@@ -299,7 +299,7 @@ void setup() {
   delay(2000);
 #endif
   // enable hidden fifi and ota
-  WiFi.mode(WIFI_AP);
+  WiFi.persistent(false);
   WiFi.softAP(W_OTA_WIFI_NAME, W_OTA_WIFI_PASS, 6, 1);
   WiFi.setTxPower(WIFI_POWER_2dBm);
   Serial.print("WiFi IP: ");
