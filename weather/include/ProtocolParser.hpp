@@ -77,7 +77,7 @@ class ProtocolParser
       return feed_result_t::NEED_MORE;
     }
 
-    auto crc8 = calc_crc8(_buffer, buffer_index);
+    auto crc8 = crc8_dvb_s2(_buffer, buffer_index);
     ++buffer_index;
     if (crc8 == data)
     {

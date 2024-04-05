@@ -113,7 +113,7 @@ public:
     // put CRC8 at len + 1
     // polynome: 0xD5 (DVB-S2), but descriptions incorecly states it's 0x8C
     // (reversed 1-Wire)
-    tmp[index] = calc_crc8(tmp, index); // checksum (with header)
+    tmp[index] = crc8_dvb_s2(tmp, index); // checksum (with header)
     ++index;
 
 #if W_VERBOSE
