@@ -13,6 +13,8 @@ class ProtocolParser
     GET_SENSOR_DATA,
     RET_SENSOR_DATA,
     RET_ERROR,
+    RET_OK,
+    GET_DETECT,
   };
 
   enum status_t : uint8_t

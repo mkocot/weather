@@ -17,10 +17,9 @@
 // HardwareSerial2 -> (27, 26) [hc12]
 
 struct {
-  time_t last_send{0};
-  time_t last_send_end{0};
-  time_t last_read{0};
-  time_t last_read_end{0};
+  float h{0};
+  float t{0};
+  float p{0};
   int radio_statue{0};
   int radio_send{0};
 } status;
@@ -150,7 +149,6 @@ static int batteryVoltage() {
 }
 
 static void handle_read_sensor() {
-  status.last_read = micros();
   /* NOTE: We are using deepSleep so every iteration starts with setup() */
   inVolt = batteryVoltage();
 #if 0
@@ -167,10 +165,13 @@ static void handle_read_sensor() {
   replyPacketNew.set<VoltageSensor>(inVolt);
 #endif
 
-bme.measure();
-  replyPacketNew.set<TemperatureSensor>(bme.readTemperature());
-  replyPacketNew.set<PressureSensor>(bme.readPressure());
-  replyPacketNew.set<HumiditySensor>(bme.readHumidity());
+  bme.measure();
+  status.h = bme.readHumidity();
+  status.t = bme.readTemperature();
+  status.p = bme.readPressure();
+  replyPacketNew.set<TemperatureSensor>(status.t);
+  replyPacketNew.set<PressureSensor>(status.p);
+  replyPacketNew.set<HumiditySensor>(status.h);
 #  if W_BSEC
   extraPacket.set<GasSensor>(GasSensorStorage(
       bme.gasResistance, bme.iaq, bme.staticIaq, bme.co2Equivalent,
@@ -192,11 +193,9 @@ bme.measure();
 #if W_VERBOSE
   printValues();
 #endif
-  status.last_read_end = micros();
 }
 
 static void handle_send_message() {
-  status.last_send = micros();
   // TODO(m): use extra only for BME680
   int ret;
 #if W_EXTRA_PACKET
@@ -217,7 +216,6 @@ static void handle_send_message() {
     Serial.print("send finished: ");
     Serial.println(ret);
   }
-  status.last_send_end = micros();
 }
 
 static void printValues() {
@@ -312,24 +310,16 @@ void setup() {
   });
 
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
-    const auto reading_took = status.last_read_end - status.last_read;
-    const auto sending_took = status.last_send_end - status.last_send;
     String asd = "Go to /update \nCurrent time: ";
     asd += micros();
-    asd += "\nLast read: ";
-    asd += status.last_read;
-    asd += " read took: ";
-    asd += reading_took;
-    asd += "\nLast send: ";
-    asd += status.last_send;
-    asd += " sending took: ";
-    asd += sending_took;
-    asd += " status init: ";
-    asd += status.radio_statue;
-    asd += " status send: ";
-    asd += status.radio_send;
-    asd += "\nWatchdog restarts: ";
-    // asd += radio_rfm69_watchdog_restarts();
+    asd += "\n temp: ";
+    asd += status.t;
+
+    asd += "\n pressure: ";
+    asd += status.p;
+    asd += "\n hum: ";
+    asd += status.h;
+    asd += "\n";
 
     request->send(200, "text/plain", asd);
   });

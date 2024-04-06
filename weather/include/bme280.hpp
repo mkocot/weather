@@ -17,6 +17,8 @@ public:
   BME280(uint8_t address = W_BME_ADDRESS): bme(), mAddress(address) {}
 
   bool begin() {
+    // MOSI 23 (MCU) -> SDA
+    // MISO 19 (MCU) -> SDO
     if (mAddress == 0xFF) {
       SPI.begin();
       if (!bme.begin()) {

@@ -17,6 +17,14 @@ class BmeTunnel
         // alternate pins
         // MISO = RX (wire to TX on translator)
         // MOSI = TX (wire to RX on translator)
+        // MOSI (on MCU) to SDI (on chip)
+        // MISO (on MCU) to SDO (on chip)
+        // yellow   SDO     white (MISO)
+        // orange   CSB     yellow (SS) (not connected)
+        // purple   SDA     blue (MOSI)
+        // green    SCL     brown (SCLK) (not connected)
+        // black    GND     black (GND)
+        // red      VCC     red (VCC 3.3)
         Serial1.begin(9600, SERIAL_8N1, miso, mosi);
         Serial1.setTimeout(500);
     }
@@ -45,7 +53,7 @@ class BmeTunnel
             }
         }
 
-        static constexpr uint8_t request[] = {0x01, ProtocolParser::GET_SENSOR_DATA, 0xA8};
+        static constexpr uint8_t request[] = {0x01, ProtocolParser::GET_SENSOR_DATA, 0x0B};
         Serial1.write(request, sizeof(request));
         Serial1.flush();
         // Wait up to 1s for result
