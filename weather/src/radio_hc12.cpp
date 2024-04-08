@@ -1,7 +1,6 @@
 #include "radio_hc12.hpp"
-
-#include <CRC.h>
-#include <SoftwareSerial.h>
+#include <Arduino.h>
+#include <crc8.h>
 
 constexpr auto TX2 = 26;
 constexpr auto RX2 = 27;
@@ -36,7 +35,7 @@ constexpr auto MAX_PAYLOAD_SIZE = MAX_PACKET_SIZE - sizeof(HC12_HDR) - CRC_SIZE;
 
 
 class HC12 {
-  SoftwareSerial &mStream;
+  HardwareSerial &mStream;
   uint8_t mSet_pin{255};
   bool mWaitForResponse{false};
   uint8_t tmp[MAX_PACKET_SIZE] = {0}; // packet is 64 bytes long
@@ -61,7 +60,7 @@ class HC12 {
   }
 
 public:
-  HC12(SoftwareSerial &stream, uint8_t set_pin)
+  HC12(HardwareSerial &stream, uint8_t set_pin)
       : mStream(stream), mSet_pin(set_pin) {
     pinMode(mSet_pin, OUTPUT);
     exitCommandMode();
@@ -114,7 +113,7 @@ public:
     // put CRC8 at len + 1
     // polynome: 0xD5 (DVB-S2), but descriptions incorecly states it's 0x8C
     // (reversed 1-Wire)
-    tmp[index] = crc8(tmp, index); // checksum (with header)
+    tmp[index] = calc_crc8(tmp, index); // checksum (with header)
     ++index;
 
 #if W_VERBOSE
@@ -146,8 +145,7 @@ public:
   }
 };
 
-SoftwareSerial ss2(TX2, RX2);
-HC12 hc2(ss2, SET2);
+HC12 hc2(Serial2, SET2);
 
 int radio_hc12_id(uint8_t *data) {
   const auto nodeId = ESP.getEfuseMac();
@@ -161,7 +159,11 @@ int radio_hc12_id(uint8_t *data) {
 }
 
 int radio_hc12_setup() {
-  ss2.begin(9600); // SWSERIAL_8N1, TX2, RX2);
+  // NOTE(m): YES! They are swapped for unknown
+  // reasonons, rename to remove future confusion
+  // TODO: Rename TX2 to RX2
+  // TODO: Rename RX2 to TX2
+  Serial2.begin(9600, SERIAL_8N1, TX2, RX2);
   return 0;
 }
 

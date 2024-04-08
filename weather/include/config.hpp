@@ -51,12 +51,14 @@
 #define W_BME_SPI (0x00000001)
 #define W_BME_I2C (0x00000000)
 
-#define W_BME_OFF (0x00000000)
-#define W_BME_280 (0x28000000)
-#define W_BME_680 (0x68000000)
+#define W_BME_OFF    (0x00000000)
+#define W_BME_280    (0x28000000)
+#define W_BME_680    (0x68000000)
+#define W_BME_TUNNEL (0xFF000000)
 
 #define W_BME_280_SPI ((W_BME_280) | (W_BME_SPI))
 #define W_BME_680_SPI ((W_BME_680) | (W_BME_SPI))
+#define W_BME_TUNNEL_SPI ((W_BME_TUNNEL) | (W_BME_SPI))
 
 
 #define W_BSEC (0)
@@ -69,7 +71,7 @@
 #define W_BME_PROT ((W_BME) & (W_BME_PROT_MASK))
 
 // Validate user supplied values
-#if !((W_BME_TYPE == W_BME_280) || (W_BME_TYPE == W_BME_680) || (W_BME_TYPE == W_BME_OFF))
+#if !((W_BME_TYPE == W_BME_280) || (W_BME_TYPE == W_BME_680) || (W_BME_TYPE == W_BME_OFF) || (W_BME_TYPE == W_BME_TUNNEL))
 #error Invalid W_BME_TYPE (IC)
 #endif
 
