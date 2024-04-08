@@ -20,7 +20,7 @@ import fetch
 import protocol
 from config import load_config
 from protocol import (HumiditySensor, PressureSensor, SoilMoistureSensor,
-                      TempSensor, VOCSensor, VoltSensor)
+                      TempSensor, VOCSensor, VoltSensor, WindSensor)
 
 USE_MQTT = False
 
@@ -37,6 +37,7 @@ stype2name = {
     VoltSensor.MODULE_ID: ('volt', lambda v: fetch.Volt(v * 0.001)),
     SoilMoistureSensor.MODULE_ID: ('soil', fetch.Humidity),
     VOCSensor.MODULE_ID: ('voc', None),
+    WindSensor.MODULE_ID: ('wind', fetch.WindTick),
 }
 
 logging.basicConfig(format='%(asctime)s %(message)s')
@@ -55,7 +56,7 @@ RRD = fetch.SQLiteDB(storage_path, ro=True)
 
 class ScreenInfo:
     def __init__(self):
-        self.deadline = 0
+        self.deadline = 0.0
         self.state = 0
         self.sensor_idx = 0
         self.time_to_swith_state = 0
@@ -247,7 +248,12 @@ class WeatherProcessor:
         # NOTE(m): We could just use set of sensors values converted to
         # RRD types not dict of names
         for sid in df.modules:
-            module_name, converter = stype2name.get(sid.MODULE_ID)
+            if sid.MODULE_ID not in stype2name:
+                print('Unsupported module id:', sid.MODULE_ID)
+                continue
+
+            module_name, converter = stype2name[sid.MODULE_ID]
+
             if sid.MODULE_ID == protocol.ScreenSensor.MODULE_ID:
                 await self.st.add_screen(df.device_id, addr)
                 continue
@@ -257,10 +263,19 @@ class WeatherProcessor:
                 sensors['iaq'] = fetch.Iaq(sid.iaq)
                 sensors['co2'] = fetch.Co2(sid.co2)
                 sensors['gas_raw'] = fetch.GasResistance(sid.gas_raw)
+            elif module_name == 'wind':
+                # store in db with 10s "delays" counted backward from last entry
+                snapshot_time = fetch.now()
+                for i in reversed(range(len(sid.value))):
+                    if sid.value[i]:
+                        RRD.add(df.device_id, (fetch.WindTick(sid.value[i]), ), current_time=snapshot_time)
+                    snapshot_time -= datetime.timedelta(seconds=10)
+                print('wind sensor', 'min', min(sid.value), 'mean', sum(sid.value) / len(sid.value), 'max', max(sid.value))
+                continue
             elif module_name:
                 sensors[module_name] = converter(sid.value)
             else:
-                print(f'Unknown module: {sid.MODULE_ID}')
+                print('should not happen')
 
         RRD.add(df.device_id, sensors.values())
 
@@ -341,12 +356,11 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
         if len(self.cache) < 4:
             return None
 
-        for index in range(len(self.cache)):
+        for index in range(len(self.cache) - 1):
             raw_version = self.cache[index]
             version_zero = (raw_version & 0b00001111) >> 0
             version = (raw_version & 0b11110000) >> 4
 
-            # print(version, version_zero)
             if version_zero != 0:
                 # reserved bits are set
                 continue

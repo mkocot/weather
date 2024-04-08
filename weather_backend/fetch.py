@@ -3,8 +3,10 @@ import math
 from os import environ
 from os.path import join, exists
 from asyncio import subprocess, wait_for, Lock
+import re
 import sqlite3
 from datetime import timedelta, datetime as dt, timezone
+import time
 
 TIME = 24 * 60 * 60
 ENABLE_DUCK_DB = False
@@ -115,6 +117,13 @@ class GasResistance(Gauge):
     def __init__(self, value):
         super().__init__(value)
 
+class WindTick(Gauge):
+    DS_NAME = "wind"
+    DS_RANGE = (0, 255)
+    DS_TIME = 20
+
+    def __init__(self, value):
+        super().__init__(value)
 
 class SQLiteDB:
     # NOTE: unixepoch is available from 3.38, debian is using old, because why not
@@ -126,12 +135,31 @@ class SQLiteDB:
         self.directory = data_directory
         self.ro = ro
 
+    def _create_db(self, con: sqlite3.Connection):
+        sql = '''
+        CREATE TABLE IF NOT EXISTS "values" (
+            "timestamp" TIMESTAMP PRIMARY KEY,
+            "temp" FLOAT,
+            "hum" FLOAT,
+            "pres" FLOAT,
+            "volt" FLOAT,
+            "wind" FLOAT
+        );
+        '''
+
+        con.execute(sql)
+
     def _open(self, name) -> sqlite3.Connection:
         if name not in self.connections:
             con = sqlite3.connect(
                 join(self.directory, self.SENSOR_N_TEMPLATE % name))
-            self.connections[name] = con
-        return self.connections[name]
+
+            self._create_db(con)
+
+            self.connections[name] = {
+                'connection': con,
+            }
+        return self.connections[name]['connection']
 
     def last(self, name):
         con = self._open(name)
@@ -141,9 +169,8 @@ class SQLiteDB:
         return int(c.fetchone()[0])
 
     @staticmethod
-    def _wrap(values):
+    def _wrap(values, keys):
         def _zip(v):
-            keys = ['time', 'temp', 'hum', 'pres', 'volt']
             return dict(zip(keys, (v[0].timestamp(),) + v[1:]))
 
         if isinstance(values, (tuple, list)) and len(values) == 5:
@@ -151,11 +178,17 @@ class SQLiteDB:
 
         return (_zip(v) for v in values)
 
-    def lastupdate(self, name):
+    _default_sensors = ['timestamp', 'temp', 'hum', 'pres', 'volt']
+
+    def lastupdate(self, name, *, sensors=None):
+        sensors = sensors or self._default_sensors
+
+        sensors_query = ','.join('"%s"' % s for s in sensors)
+
         con = self._open(name)
-        query = """
+        query = f"""
             SELECT
-                "timestamp", "temp", "hum", "pres", "volt"
+                {sensors_query}
             FROM
                 "values"
             ORDER BY
@@ -164,22 +197,26 @@ class SQLiteDB:
         """
         c = con.execute(query)
         data = c.fetchone()
-        return DuckDB._wrap(data)
+        return DuckDB._wrap(data, sensors)
 
-    def rrdfetch(self, name, start=TIME):
+    def rrdfetch(self, name, start=TIME, sensors=None):
+        sensors = sensors or self._default_sensors
+
         end_date = now()
         start_date = end_date - timedelta(seconds=start)
 
         start_date_utc = start_date.astimezone(timezone.utc)
         end_date_utc = end_date.astimezone(timezone.utc)
 
-        QUERY = '''
+        values = ','.join(
+            '"ref_clocks"."generate_series" as "timestamp"' if s == 'timestamp'
+            else f'avg("{s}") AS "{s}"' 
+            for s in sensors
+        )
+
+        QUERY = f'''
         SELECT
-            "ref_clocks"."generate_series" as "timestamp",
-            avg("temp") AS "temp",
-            avg("hum") AS "hum",
-            avg("pres") AS "pres",
-            avg("volt") AS  "volt"
+            {values}
         FROM
         (
             WITH RECURSIVE
@@ -199,7 +236,7 @@ class SQLiteDB:
             FROM
                 "values"
             WHERE
-                "timestamp" BETWEEN STRFTIME('%s', :start) AND STRFTIME('%s', :end)) sensor_values
+                "timestamp" BETWEEN (STRFTIME('%s', :start) + 0) AND (STRFTIME('%s', :end) + 0)) sensor_values
             ON
                 ("sensor_values"."timestamp") >= "ref_clocks"."generate_series"
             AND (("sensor_values"."timestamp") - "ref_clocks"."generate_series") < :step
@@ -214,12 +251,15 @@ class SQLiteDB:
                         'end': end_date_utc, 'start': start_date_utc})
         result = c.fetchall()
         return {
-            "time": [x[0] for x in result],
-            "temp": [x[1] for x in result],
-            "hum": [x[2] for x in result],
-            "pres": [x[3] for x in result],
-            "volt": [x[4] for x in result],
+            v:[r[i] for r in result] for i, v in enumerate(sensors)
         }
+        # return {
+        #     "time": [x[0] for x in result],
+        #     "temp": [x[1] for x in result],
+        #     "hum": [x[2] for x in result],
+        #     "pres": [x[3] for x in result],
+        #     "volt": [x[4] for x in result],
+        # }
 
         # if end_date.tzinfo:
         #     current_tz = end_date.tzinfo
@@ -231,14 +271,19 @@ class SQLiteDB:
         #     for row in con.fetchall()
         # )
 
-    def add(self, name: str, _data: tuple):
-        current_time = now()
+    def add(self, name: str, _data: tuple, *, current_time=None):
+        current_time = current_time or now()
         con = self._open(name)
         # does it exists?
         data = list(_data)
 
+        if not data:
+            return
+
+        # check for column existence ?
+
         keys = ','.join(["timestamp"] + [f'"{d.DS_NAME}"' for d in data])
-        vals = [current_time] + [d.value for d in data]
+        vals = [current_time.timestamp()] + [d.value for d in data]
         placeholders = ','.join(['?'] * (len(data) + 1))
 
         sql = f"""
