@@ -3,6 +3,8 @@ import codecs
 from io import BytesIO
 
 VERSION = 1
+VERSION_2 = 2
+
 MAGIC_TO_CLIENT = ord('w')
 MAGIC_TO_BROKER = ord('W')
 
@@ -77,9 +79,15 @@ class VoltSensor(SimpleUint32):
 class TempSensor(SimpleFloat32):
     MODULE_ID = 0x01
 
+    def __str__(self):
+        return f'temp: {self.value}'
+
 
 class HumiditySensor(SimpleFloat32):
     MODULE_ID = 0x03
+
+    def __str__(self):
+        return f'hum: {self.value}'
 
 
 class PressureSensor(BaseModule):
@@ -98,6 +106,9 @@ class PressureSensor(BaseModule):
         else:
             value = fval
         return cls(value), 4
+
+    def __str__(self):
+        return f'pres: {self.value}'
 
 
 class ScreenSensor(BaseModule):
@@ -160,7 +171,7 @@ class VOCSensor(BaseModule):
 
     @classmethod
     def parse(cls, data):
-        if len(data) < 17:
+        if len(data) < cls.MODULE_SIZE:
             raise Exception("too short")
         # gas_raw, iaq, iaq_static, co2, flags
         gas_raw = SimpleFloat32.parse(data[0:4])[0].value
@@ -178,6 +189,24 @@ class SoilMoistureSensor(SimpleFloat32):
 class TimeSensor(SimpleInt32):
     MODULE_ID = 0x4
 
+class WindSensor(BaseModule):
+    MODULE_ID = 0x10
+    MODULE_SIZE = 6
+    value = [0 for _ in range(MODULE_SIZE)]
+    def __init__(self, ticks):
+        if len(ticks) != len(self.value):
+            raise Exception('invalid size')
+
+        for i, v in enumerate(ticks):
+            self.value[i] = int(v)
+    
+    @classmethod
+    def parse(cls, data):
+        if len(data) < cls.MODULE_SIZE:
+            raise Exception("too short")
+        
+        return cls(data), cls.MODULE_SIZE
+
 MODULES = [
     VoltSensor,
     TempSensor,
@@ -187,7 +216,8 @@ MODULES = [
     ImagePush,
     TimeSensor,
     VOCSensor,
-    SoilMoistureSensor
+    SoilMoistureSensor,
+    WindSensor,
 ]
 
 _ID_TO_MODULE = {m.MODULE_ID: m for m in MODULES}
@@ -196,14 +226,19 @@ _ID_TO_MODULE = {m.MODULE_ID: m for m in MODULES}
 # 6 - device id
 # 1 - sensors count
 HEADER_SIZE = 2 + 6 + 1
+HEADER_SIZE_V2 = 2 + 1 + 1
 
+HEADER_SIZES = {
+    VERSION: HEADER_SIZE,
+    VERSION_2: HEADER_SIZE_V2,
+}
 
 class DataFrame:
     def __init__(self):
-        self.device_id = None,
+        self.device_id = ''
         self.modules = []
         self.version = 0
-        self.message_to_broker = None
+        self.message_to_broker = False
 
 
 def serialize(df: DataFrame):
@@ -227,16 +262,27 @@ def parse(data: bytes):
     if not isinstance(data, bytes):
         raise Exception("data is not bytes")
     offset = 0
-    if len(data) < HEADER_SIZE:
+
+    
+    if len(data) < 2: # magic byte + version
         raise Exception("invalid header")
-    if (data[0] != MAGIC_TO_CLIENT and data[0] != MAGIC_TO_BROKER) and data[1] != VERSION:
+
+    if (data[0] != MAGIC_TO_CLIENT and data[0] != MAGIC_TO_BROKER) and data[1] not in (VERSION, VERSION_2):
         raise Exception("invalid header")
     df = DataFrame()
     df.message_to_broker = data[0] == MAGIC_TO_BROKER
     df.version = data[1]
-    df.device_id = codecs.encode(data[2:8], "hex").decode("ascii")
-    sensors_num = data[8]
-    offset = HEADER_SIZE
+    if df.version == VERSION:
+        df.device_id = codecs.encode(data[2:8], "hex").decode("ascii")
+        sensors_num = data[8]
+    elif df.version == VERSION_2:
+        df.device_id = codecs.encode(data[2:3], "hex").decode("ascii")
+        sensors_num = data[3]
+    else:
+        raise Exception("check yar code")
+
+    offset = HEADER_SIZES[df.version]
+
     while sensors_num > 0 and offset < len(data):
         module_id = data[offset]
         offset += 1

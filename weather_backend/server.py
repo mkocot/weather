@@ -87,10 +87,10 @@ def _data_from_sensors(rrd, sensors):
     for idx in range(len(sensors)):
         s = sensors[idx]
         data = datas[idx]
-        if "time" not in data:
+        if "timestamp" not in data:
             now = int(time.time())
-            data["time"] = [now - 600, now]
-        time_slots = data.pop("time")
+            data["timestamp"] = [now - 600, now]
+        time_slots = data.pop("timestamp")
         data = filter_data(data)
         tick = time_slots[1] - time_slots[0]
 
