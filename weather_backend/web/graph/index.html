@@ -229,6 +229,7 @@
         //}
       ];
       let _spline = uPlot.paths.spline();
+      let _linear = uPlot.paths.linear();
       let _mooSync = uPlot.sync("moo")
       const matchSyncKeys = (own, ext) => own == ext;
       let opts = {
@@ -260,7 +261,7 @@
             // initial toggled state (optional)
             show: true,
 
-            spanGaps: false,
+            spanGaps: true,
 
             // in-legend display
             label: "Sensor 1",
@@ -268,25 +269,25 @@
             paths: _spline,
 
             // series style
-           // stroke: "red",
+            width: 2
           },
           {
             label: "Sensor 2",
             show: true,
-            spanGaps: false,
+            spanGaps: true,
             stroke: "DarkCyan",
             paths: _spline,
             value: (self, rawValue) => self.series[1].value(self, rawValue),
-            //fill: (self, idx) => {return self.series[1].fill},
+            width: 2
           },
           {
             label: "Sensor O",
             show: true,
-            spanGaps: false,
+            spanGaps: true,
             stroke: "Blue",
-            paths: _spline,
+            paths: _linear,
             value: (self, rawValue) => self.series[1].value(self, rawValue),
-            //fill: (self, idx) => {return self.series[1].fill},
+            width: 2
           }
         ],
       };
@@ -301,7 +302,6 @@
           if (idx == 0) {
             return;
           }
-          //x.fill = cfg.fill;
           // that's should be default but somehow isn't
           //x.stroke = "black";
           // addig "scale" prop will remove axis values on the left
