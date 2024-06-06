@@ -102,9 +102,12 @@
             remaped_values[i].push(v);
           });
 
-          if (index > 0) {
-            // interpolate between last_good_index and index
-            if (Math.abs(last_good_index - i) > 1) {
+          if (index < 0) {
+            continue;
+          }
+
+          // interpolate between last_good_index and index
+          if (Math.abs(last_good_index - i) > 1) {
             known_sensors.forEach((_, idx) => {
               if (last_good_index < 0) {
                 start_value_index = i;
@@ -114,17 +117,26 @@
                 start_index = last_good_index;
               }
 
-              last_good_value = remaped_values[idx][start_value_index];
+              const last_good_value = remaped_values[idx][start_value_index];
+              if (last_good_value === null) {
+                return;
+              }
+              
+              const next_good_value = remaped_values[idx][i]
+              if (next_good_value === null) {
+                return;
+              }
+
               for (j = start_index + 1; j < i; ++j) {
                 step = (j - start_index) / (i - 1 - start_index);
                 //console.log({step, 'a': j, 'b': i - 1});
-                remaped_values[idx][j] = last_good_value * (1 - step) + step * remaped_values[idx][i];
+                remaped_values[idx][j] = last_good_value * (1 - step) + step * next_good_value;
               }
 
             });
           }
-            last_good_index = i;
-          }
+
+          last_good_index = i;
         }
 
         // interpolate missing data
