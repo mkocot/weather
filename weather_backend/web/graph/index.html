@@ -158,12 +158,10 @@
       }
       data = JSON.parse(this.responseText);
       console.log("Data fetched");
-      console.log({data});
 
       var augmented = [];
       var width = window.innerWidth * 0.9 || 800;
       var timepoints = create_timepoints_v2(data);
-      console.log({data});
       let default_fetch = (key) => {
       return () => [timepoints,
 	      data[sensorid][key],
