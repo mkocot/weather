@@ -11,25 +11,12 @@
 <body>
 
   <script src="uPlot.iife.js"></script>
-  <style>
-    .uplot {
-      /* background: #eee; */
-    }
-    body {
-      background: #eee;
-    }
-  </style>
 
   <script type="text/javascript">
     var data = {};
     var sensorid = "e09806259a66";
     var sensorid2 = "24a1603048ba";
     var sensoridOut = "ec62609d4998";
-    var sensors = {
-      [sensorid]: { colour: "red" },
-      [sensorid2]: { colour: "green" },
-      [sensoridOut]: { colour: "blue" }
-    };
 
     function absolute_humidity(t, p, h) {
       if (!t || !p || !h) {
@@ -41,7 +28,7 @@
       f_p = 1.0016 + (3.15E-6*p)-(0.074/p)
       A = h * f_p * ew_t
       B = (Rw * (t+ 273.15))
-      return (A/B) * 1000
+      return A/B
     }
     function dew_point(t, h) {
       if (!t || !h) {
@@ -102,12 +89,9 @@
             remaped_values[i].push(v);
           });
 
-          if (index < 0) {
-            continue;
-          }
-
-          // interpolate between last_good_index and index
-          if (Math.abs(last_good_index - i) > 1) {
+          if (index > 0) {
+            // interpolate between last_good_index and index
+            if (Math.abs(last_good_index - i) > 1) {
             known_sensors.forEach((_, idx) => {
               if (last_good_index < 0) {
                 start_value_index = i;
@@ -117,26 +101,17 @@
                 start_index = last_good_index;
               }
 
-              const last_good_value = remaped_values[idx][start_value_index];
-              if (last_good_value === null) {
-                return;
-              }
-              
-              const next_good_value = remaped_values[idx][i]
-              if (next_good_value === null) {
-                return;
-              }
-
+              last_good_value = remaped_values[idx][start_value_index];
               for (j = start_index + 1; j < i; ++j) {
                 step = (j - start_index) / (i - 1 - start_index);
                 //console.log({step, 'a': j, 'b': i - 1});
-                remaped_values[idx][j] = last_good_value * (1 - step) + step * next_good_value;
+                remaped_values[idx][j] = last_good_value * (1 - step) + step * remaped_values[idx][i];
               }
 
             });
           }
-
-          last_good_index = i;
+            last_good_index = i;
+          }
         }
 
         // interpolate missing data
@@ -158,10 +133,12 @@
       }
       data = JSON.parse(this.responseText);
       console.log("Data fetched");
+      console.log({data});
 
       var augmented = [];
       var width = window.innerWidth * 0.9 || 800;
       var timepoints = create_timepoints_v2(data);
+      console.log({data});
       let default_fetch = (key) => {
       return () => [timepoints,
 	      data[sensorid][key],
@@ -171,7 +148,7 @@
       let graphs = [
         {
           title: "Temp [°C]",
-          //fill: "rgba(200, 0, 0, 0.3)",
+          fill: "rgba(200, 0, 0, 0.3)",
           unit: "°C",
           stroke: "red",
           fetch: default_fetch("temp"),
@@ -190,32 +167,32 @@
         //},
         {
           title: "Humidity [%]",
-          //fill: "rgba(0, 0, 255, 0.3)",
+          fill: "rgba(0, 0, 255, 0.3)",
           unit: "%",
           stroke: "blue",
           fetch: default_fetch("hum")
         },
         {
           title: "Absolute Humidity [g/m³]",
-          //fill: "rgba(0, 128, 128, 0.3)",
+          fill: "rgba(0, 128, 128, 0.3)",
           unit: "g/m³",
           stroke: "rgb(0, 255, 255)",
           fetch: () => {
-	          mapper = (x) => absolute_humidity(x[0], x[1], x[2]);
+	          mapper = (x) => 1000 * absolute_humidity(x[0], x[1], x[2]);
       	    humidifier = (x) => zip([data[x]["temp"], data[x]["pres"], data[x]["hum"]]).map(mapper);
 	          return [timepoints, humidifier(sensorid), humidifier(sensorid2), humidifier(sensoridOut)];
 	        }
         },
         {
           title: "Pressure [hPa]",
-          //fill: "rgba(0, 255, 255, 0.3)",
+          fill: "rgba(0, 255, 255, 0.3)",
           unit: "hPa",
           stroke: "purple",
           fetch: default_fetch("pres")
         },
         {
           title: "Bat [V]",
-          //fill: "rgba(128, 64, 64, 0.3)",
+          fill: "rgba(128, 64, 64, 0.3)",
           unit: "V",
           stroke: "gray",
           resolution: 2,
@@ -239,7 +216,6 @@
         //}
       ];
       let _spline = uPlot.paths.spline();
-      let _linear = uPlot.paths.linear();
       let _mooSync = uPlot.sync("moo")
       const matchSyncKeys = (own, ext) => own == ext;
       let opts = {
@@ -271,33 +247,33 @@
             // initial toggled state (optional)
             show: true,
 
-            spanGaps: true,
+            spanGaps: false,
 
             // in-legend display
             label: "Sensor 1",
-            stroke: "Chocolate",
+            stroke: "black",
             paths: _spline,
 
             // series style
-            width: 2
+           // stroke: "red",
           },
           {
             label: "Sensor 2",
             show: true,
-            spanGaps: true,
-            stroke: "DarkCyan",
+            spanGaps: false,
+            stroke: "gray",
             paths: _spline,
             value: (self, rawValue) => self.series[1].value(self, rawValue),
-            width: 2
+            fill: (self, idx) => {return self.series[1].fill},
           },
           {
             label: "Sensor O",
             show: true,
             spanGaps: true,
-            stroke: "Blue",
-            paths: _linear,
+            stroke: "brown",
+            paths: _spline,
             value: (self, rawValue) => self.series[1].value(self, rawValue),
-            width: 2
+            fill: (self, idx) => {return self.series[1].fill},
           }
         ],
       };
@@ -312,6 +288,7 @@
           if (idx == 0) {
             return;
           }
+          x.fill = cfg.fill;
           // that's should be default but somehow isn't
           //x.stroke = "black";
           // addig "scale" prop will remove axis values on the left

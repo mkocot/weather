@@ -2,14 +2,15 @@
 #define W_BME_TUNNEL_H
 
 #include <ProtocolParser.hpp>
+#include <vector>
+#include <tuple>
 
 class BmeTunnel
 {
     bool requestPending = false;
-    float temp = NAN;
-    float pres = NAN;
-    float hum = NAN;
+    std::vector<std::tuple<float, float, float>> readings;
     ProtocolParser parser;
+
     public:
     BmeTunnel(int cs, int mosi, int miso, int sck)
     {
@@ -25,6 +26,7 @@ class BmeTunnel
         // green    SCL     brown (SCLK) (not connected)
         // black    GND     black (GND)
         // red      VCC     red (VCC 3.3)
+        Serial.printf("tunel: RX=%d TX=%d\n", miso, mosi);
         Serial1.begin(9600, SERIAL_8N1, miso, mosi);
         Serial1.setTimeout(500);
     }
@@ -36,9 +38,7 @@ class BmeTunnel
     bool measure()
     {
         requestPending = true;
-        temp = NAN;
-        pres = NAN;
-        hum = NAN;
+        readings.clear();
 
         // drain any data on serial
         auto now = millis();
@@ -71,13 +71,15 @@ class BmeTunnel
             Serial.printf("Data from serial: 0x%02X\r\n", data);
 #endif
 
-            if (parser.feed(data) != ProtocolParser::feed_result_t::PARSED)
+            const auto feed_status = parser.feed(data);
+            if (feed_status != ProtocolParser::feed_result_t::PARSED)
             {
                 // If not parsed yet, conitnue
                 continue;
             }
 
-            if (parser.msg_status() != ProtocolParser::status_t::OK)
+            const auto message_status = parser.msg_status();
+            if (message_status != ProtocolParser::status_t::OK)
             {
                 Serial.println("Message parsed, but invalid");
                 // Parsed, but result is flawed, try again
@@ -104,32 +106,79 @@ class BmeTunnel
 
         const uint8_t *data = parser.buffer();
         const uint8_t *payload_start = data + 1;
-        temp = *reinterpret_cast<const float*>(payload_start);
-        hum = *reinterpret_cast<const float*>(payload_start + sizeof(float));
-        pres = *reinterpret_cast<const float*>(payload_start + sizeof(float) * 2);
 
+        // should not happen on proper external device
+        if (parser.msg_len() <= 1)
+        {
+            Serial.println("payload too short");
+            return false;
+        }
+
+        const uint8_t payload_len = parser.msg_len() - 1;
+        uint8_t entries = payload_len / (sizeof(float) * 3);
+        
+        // should not happen on proper external device
+        if (entries * (sizeof(float) * 3) != payload_len)
+        {
+            Serial.println("invalid payload size");
+            return false;
+        }
+
+        while(entries--)
+        {
+            readings.push_back(std::make_tuple(
+                *reinterpret_cast<const float*>(payload_start), // TEMP
+                *reinterpret_cast<const float*>(payload_start + sizeof(float)), // HUMIDITY
+                *reinterpret_cast<const float*>(payload_start + sizeof(float) * 2) // PRESSURE
+            ));
+
+            payload_start += sizeof(float) * 3;
 #if W_VERBOSE
+        const auto &last = readings.at(readings.size() - 1);
         Serial.print("Parsing response: temp=");
-        Serial.print(temp);
+        Serial.print(std::get<0>(last));
         Serial.print(" hum=");
-        Serial.print(hum);
+        Serial.print(std::get<1>(last));
         Serial.print(" pres=");
-        Serial.println(pres);
+        Serial.println(std::get<2>(last));
 #endif
+        }
+
+
         return true;
     }
 
-    constexpr float readTemperature() const
+    template<uint8_t index>
+    float readMeasure() const
     {
-        return temp;
+        for (auto &r : readings)
+        {
+            float t = std::get<index>(r);
+            if (t != NAN)
+            {
+                return t;
+            }
+        }
+
+        return NAN;
     }
-    constexpr float readPressure() const
+
+    float readTemperature() const
     {
-        return pres;
+        return readMeasure<0>();
     }
-    constexpr float readHumidity() const
+    float readHumidity() const
     {
-        return hum;
+        return readMeasure<1>();
+    }
+    float readPressure() const
+    {
+        return readMeasure<2>();
+    }
+
+    const std::vector<std::tuple<float, float, float>> &obtainReadings() const
+    {
+        return readings;
     }
 };
 #endif

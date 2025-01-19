@@ -50,8 +50,8 @@ class ProtocolParser
     NEED_MORE,
     ERROR
   };
-
-  uint8_t _buffer[16] = {0};
+  // I have plenty of ram so go banana
+  uint8_t _buffer[128] = {0};
   uint8_t buffer_index = 0;
   status_t message_status = status_t::INVALID_MSG_ID;
 
@@ -67,6 +67,7 @@ class ProtocolParser
       if (data < 1 || data >= sizeof(_buffer))
       {
         message_status = status_t::INVALID_PAYLOAD_LENGTH;
+        Serial.printf("%d: invalid payload length\n", data);
         return feed_result_t::ERROR;
       }
       _buffer[buffer_index++] = data;

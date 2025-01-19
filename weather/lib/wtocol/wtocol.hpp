@@ -1,9 +1,10 @@
 #ifndef W_WTOCOL_H
 #define W_WTOCOL_H
 
-//#include <Arduino.h>
+// #include <Arduino.h>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <stdexcept>
 
 template <int ID, typename T>
@@ -31,12 +32,12 @@ class __attribute__((packed)) GasSensorStorage {
 public:
   float gas_raw;    // resistance, Ohm
   float iaq;        // IndexAirQuality, No unit <0; 500>
-  float iaq_static; // IndexAurQuality (scaled), No Unit 
+  float iaq_static; // IndexAurQuality (scaled), No Unit
   float co2;        // Co2 ppm equivalent, ppm 400 .. 2000
-  uint8_t flags; // 6bits
+  uint8_t flags;    // 6bits
 
   GasSensorStorage(float gas_raw, float iaq, float iaq_static, float co2,
-            uint8_t flags)
+                   uint8_t flags)
       : gas_raw(gas_raw),
         iaq(iaq),
         iaq_static(iaq_static),
@@ -92,10 +93,96 @@ public:
   }
 };
 
-class GasSensor : public BaseSensor<0x08, GasSensorStorage> {
-};
+class GasSensor : public BaseSensor<0x08, GasSensorStorage> {};
 class VoltageSensor : public BaseSensor<0x05, uint32_t> {};
 class SoilMoisture : public BaseSensor<0x09, float> {};
+
+template <uint8_t Q, int32_t MIN, int32_t MAX, typename T>
+struct Quantizer {
+  // Value 0 is reserved for NAN, +/-INF, etc
+  constexpr static const auto FACTOR =
+      ((static_cast<uint32_t>(1) << Q) - 1) / static_cast<float>(MAX - MIN);
+  constexpr static inline T quantize(float val) {
+
+    if (std::isnan(val) || std::isinf(val)) {
+      return 0;
+    }
+
+    // Clamp to MIN...MAX
+    if (val < MIN){
+      val = MIN;
+    }
+    else if (val > MAX)
+    {
+      val = MAX;
+    }
+
+    return 1 + static_cast<T>((val - MIN) * FACTOR + 0.5f);
+  }
+};
+
+struct THPCompoundSensorData {
+  struct thp_t {
+    // -40 .. 85
+    uint16_t t;
+    // 0..100
+    uint8_t h;
+    // 300 .. 110000
+    uint16_t p;
+
+    void reset() {
+      t = 0;
+      h = 0;
+      p = 0;
+    }
+
+    thp_t(): t(0), h(0), p(0) {}
+
+    thp_t(float t, float h, float p)
+        : t(Quantizer<16, -40, 85, uint16_t>::quantize(t)),
+          h(Quantizer<8, 0, 100, uint8_t>::quantize(h)),
+          p(Quantizer<16, 300, 110000, uint16_t>::quantize(p)) {}
+
+  } __attribute__((packed));
+  static_assert(sizeof(thp_t) == 5, "BAD");
+  constexpr static auto MAX_SENSORS = 6;
+
+  uint8_t len;
+  thp_t sensors[MAX_SENSORS];
+
+  THPCompoundSensorData(): len(0) {
+    reset();
+  }
+
+  void reset()
+  {
+    len = 0;
+    for (int i = 0; i < MAX_SENSORS; i++) {
+      auto &s = sensors[i];
+      s.reset();
+    }
+  }
+
+  bool add(const std::tuple<float, float, float> &data)
+  {
+    if (len >= MAX_SENSORS)
+    {
+      return false;
+    }
+
+    sensors[len++] = thp_t(std::get<0>(data), std::get<1>(data), std::get<2>(data));
+
+    return true;
+  }
+};
+
+static_assert(sizeof(THPCompoundSensorData) ==
+                  6 * sizeof(THPCompoundSensorData::thp_t) + 1,
+              "BAD");
+
+// Yes it should be variable sized, but I'm not in mood
+// to rewrite this whole thing. Maybe later... (yeah, right)
+class THPCompoundSensor : public BaseSensor<0x11, THPCompoundSensorData> {};
 
 template <size_t A, size_t B>
 struct TAssertEquality {
@@ -109,15 +196,14 @@ struct TypeAssertEquality {
   static_assert(value, "Not equal");
 };
 
-
 template <typename A, typename B>
 struct TAssertConvertability {
   static constexpr bool value = std::is_convertible_v<A, B>;
   static_assert(value, "Not equal");
 };
 
-static_assert(
-    TAssertEquality<sizeof(GasSensorStorage), 17>::value, "pack struct");
+static_assert(TAssertEquality<sizeof(GasSensorStorage), 17>::value,
+              "pack struct");
 
 template <class X, class Tuple>
 class Idx;

@@ -42,6 +42,7 @@ def lerp(a, b, t):
 
 
 def filter_data(data):
+    return data
     modules = set(data.keys())
     modules.discard("time")
     for m in modules:
@@ -82,7 +83,7 @@ def _last_from_sensors(rrd, sensors):
 
 def _data_from_sensors(rrd, sensors):
     result = {}
-    datas = [rrd.rrdfetch(x) for x in sensors]
+    datas = [rrd.rrdfetch_raw(x) for x in sensors]
 
     for idx in range(len(sensors)):
         s = sensors[idx]
@@ -90,15 +91,8 @@ def _data_from_sensors(rrd, sensors):
         if "timestamp" not in data:
             now = int(time.time())
             data["timestamp"] = [now - 600, now]
-        time_slots = data.pop("timestamp")
         data = filter_data(data)
-        tick = time_slots[1] - time_slots[0]
 
-        data["clock"] = {
-            "tick": tick,
-            "start": time_slots[0],
-            "count": len(time_slots),
-        }
         result[s] = data
 
     return result
@@ -124,14 +118,6 @@ def data():
     resp = _data_from_sensors(rrd, sensors)
 
     # debug compare clocks
-    clock_data = None
-    for s in sensors:
-        if not clock_data:
-            clock_data = resp[s]["clock"]
-            continue
-        if clock_data != resp[s]["clock"]:
-            print("diff", s, clock_data, resp[s]["clock"])
-    resp["clock"] = clock_data
     resp = json.dumps(resp)
     headers = {
         'Content-Length': len(resp),

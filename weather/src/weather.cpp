@@ -17,9 +17,10 @@
 // HardwareSerial2 -> (27, 26) [hc12]
 
 struct {
-  float h{0};
-  float t{0};
-  float p{0};
+  // float h{0};
+  // float t{0};
+  // float p{0};
+  THPCompoundSensorData thp{};
   int radio_statue{0};
   int radio_send{0};
 } status;
@@ -102,7 +103,7 @@ auto extraPacket = SensorsPacketizer<GasSensor>();
 
 auto replyPacketNew = SensorsPacketizer<
 #if W_BME_TYPE
-    PressureSensor, HumiditySensor, TemperatureSensor
+    THPCompoundSensor
 #  if W_AC_TYPE == W_AC_BATTERY
     ,
     VoltageSensor
@@ -166,12 +167,20 @@ static void handle_read_sensor() {
 #endif
 
   bme.measure();
-  status.h = bme.readHumidity();
-  status.t = bme.readTemperature();
-  status.p = bme.readPressure();
-  replyPacketNew.set<TemperatureSensor>(status.t);
-  replyPacketNew.set<PressureSensor>(status.p);
-  replyPacketNew.set<HumiditySensor>(status.h);
+  status.thp.reset();
+
+  uint8_t index;
+  for (auto &r: bme.obtainReadings())
+  {
+    if (!status.thp.add(r))
+    {
+      Serial.println("Too much values!");
+      break;
+    }
+  }
+
+  replyPacketNew.set<THPCompoundSensor>(status.thp);
+
 #  if W_BSEC
   extraPacket.set<GasSensor>(GasSensorStorage(
       bme.gasResistance, bme.iaq, bme.staticIaq, bme.co2Equivalent,
@@ -312,13 +321,13 @@ void setup() {
   server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     String asd = "Go to /update \nCurrent time: ";
     asd += micros();
-    asd += "\n temp: ";
-    asd += status.t;
+    // asd += "\n temp: ";
+    // asd += status.t;
 
-    asd += "\n pressure: ";
-    asd += status.p;
-    asd += "\n hum: ";
-    asd += status.h;
+    // asd += "\n pressure: ";
+    // asd += status.p;
+    // asd += "\n hum: ";
+    // asd += status.h;
     asd += "\n";
 
     request->send(200, "text/plain", asd);
