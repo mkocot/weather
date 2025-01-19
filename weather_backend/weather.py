@@ -9,6 +9,7 @@ import struct
 import sys
 import time
 import traceback
+import math
 from os import mkdir
 from os.path import exists, isdir
 
@@ -20,12 +21,13 @@ import fetch
 import protocol
 from config import load_config
 from protocol import (HumiditySensor, PressureSensor, SoilMoistureSensor,
-                      TempSensor, VOCSensor, VoltSensor, WindSensor)
+                      TempSensor, VOCSensor, VoltSensor, WindSensor, THPCompound)
 
-USE_MQTT = False
+USE_ZMQ = True
 
-if USE_MQTT:
-    from asyncio_mqtt import Client
+if USE_ZMQ:
+    import zmq
+    import zmq.asyncio
 
 
 stype2name = {
@@ -38,6 +40,8 @@ stype2name = {
     SoilMoistureSensor.MODULE_ID: ('soil', fetch.Humidity),
     VOCSensor.MODULE_ID: ('voc', None),
     WindSensor.MODULE_ID: ('wind', fetch.WindTick),
+    THPCompound.MODULE_ID: ('thp', None),
+
 }
 
 logging.basicConfig(format='%(asctime)s %(message)s')
@@ -177,12 +181,11 @@ class WeatherProcessor:
         self.cfg = cfg
         self.sock = self._prepare_socket()
         self.st = ScreenThread(self.sock)
-        self.mqtt = None
+        self.zmq = None
         # hold active devices, prune if timeout is larger than 30min
         self.sensors = {}
-        if USE_MQTT:
-            asyncio.run_coroutine_threadsafe(
-                self._prepare_mqtt(), asyncio.get_running_loop())
+        if USE_ZMQ:
+            self._prepare_zmq()
 
     def _prepare_socket(self):
         MCAST_GRP = '239.87.84.82'  # (239.W.T.R)
@@ -202,22 +205,16 @@ class WeatherProcessor:
         sock.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, mreq)
         return sock
 
-    if USE_MQTT:
-        async def _prepare_mqtt(self):
-            mqtt_cfg = self.cfg.get('mqtt')
-            if not mqtt_cfg:
-                print('no MQTT config')
+    if USE_ZMQ:
+        def _prepare_zmq(self):
+            zmq_cfg = self.cfg.get('zmq')
+            if not zmq_cfg:
+                print('no ZMQ config')
                 return
 
-            broker = mqtt_cfg.get('broker')
-            if not broker:
-                print('no broker configured')
-                return
-
-            self.mqtt = Client(hostname=broker, client_id='Weather-Backend')
-            ok = await self.mqtt.connect()
-
-            return ok
+            self._zmq_ctx = zmq.asyncio.Context()
+            self.zmq = self._zmq_ctx.socket(zmq.PUB)
+            self.zmq.bind(zmq_cfg['url'])
 
     async def run(self):
         # 1) connect to broker
@@ -258,7 +255,10 @@ class WeatherProcessor:
                 await self.st.add_screen(df.device_id, addr)
                 continue
 
-            if module_name == 'voc':
+            if module_name == 'thp':
+                print('THP')
+                continue
+            elif module_name == 'voc':
                 sensors['iaq_static'] = fetch.StaticIaq(sid.iaq_static)
                 sensors['iaq'] = fetch.Iaq(sid.iaq)
                 sensors['co2'] = fetch.Co2(sid.co2)
@@ -266,11 +266,36 @@ class WeatherProcessor:
             elif module_name == 'wind':
                 # store in db with 10s "delays" counted backward from last entry
                 snapshot_time = fetch.now()
+
+                reversed_sensors = []
                 for i in reversed(range(len(sid.value))):
                     if sid.value[i]:
-                        RRD.add(df.device_id, (fetch.WindTick(sid.value[i]), ), current_time=snapshot_time)
+                        reversed_sensors.append((fetch.WindTick(sid.value[i]), snapshot_time))
                     snapshot_time -= datetime.timedelta(seconds=10)
-                print('wind sensor', 'min', min(sid.value), 'mean', sum(sid.value) / len(sid.value), 'max', max(sid.value))
+
+                for wind_tick, current_time in reversed(reversed_sensors):
+                    RRD.add(df.device_id, (wind_tick, ), current_time=current_time)
+
+                # it's measured in ticks per 10seconds
+                # full rotations create 2 ticks
+                # (n*0.5) / 10 = x/60
+                # 30n = 10x
+                # x = 3n
+                # radius is 65mm = 0.065m
+                # V = 2 * pi * r * RPM/60
+                # V = pi * 0.065 * (n / 10) m/s
+                # V = pi * 0.065 * (n / 10) * 3.6 km/h
+                mean = sum(sid.value) / len(sid.value)
+                def _to_kmh(v):
+                    r = 0.065
+                    return math.pi * r * (v / 10) * 3.6
+                print('wind sensor',
+                        'min', min(sid.value),
+                        'mean', mean,
+                        'mean (km/h)', _to_kmh(mean),
+                        'max', max(sid.value),
+                        'max (km/h)', _to_kmh(max(sid.value))
+                )
                 continue
             elif module_name:
                 sensors[module_name] = converter(sid.value)
@@ -280,11 +305,12 @@ class WeatherProcessor:
         RRD.add(df.device_id, sensors.values())
 
         # broadcast
-        if USE_MQTT:
-            await self.mqtt.publish(topic='weather/device', payload=df.device_id)
+        if USE_ZMQ:
+            await self.zmq.send_multipart([b'weather/device', str(df.device_id).encode('utf-8')])
             for k, v in sensors.items():
-                topic = f'weather/{df.device_id}/{k}'
-                await self.mqtt.publish(topic=topic, payload=v)
+                topic = f'weather/{df.device_id}/{k}'.encode('utf-8')
+                print(type(v))
+                await self.zmq.send_multipart([topic, str(v).encode('utf-8')])
 
         if DEBUG:
             sensors['rcvtime'] = rcvtime
@@ -354,9 +380,14 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
     def _try_parse(self):
         # 3 bytes header, 1 byte checksum
         if len(self.cache) < 4:
+            #print('cache:', self.cache, '(too short)')
             return None
 
-        for index in range(len(self.cache) - 1):
+        print('cache:', self.cache)
+        # 1 -> as raw_size is at index + 1
+        # 2 -> raw_size is at index + 2
+        # 3 -> payload starts at index + 3
+        for index in range(len(self.cache) - 2):
             raw_version = self.cache[index]
             version_zero = (raw_version & 0b00001111) >> 0
             version = (raw_version & 0b11110000) >> 4
@@ -387,10 +418,12 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
 
             if packet_to == packet_from:
                 # no-go: packet from self to self?
+                print(packet_from, '->', packet_to)
                 continue
 
             if index + 3 + size >= len(self.cache):
                 # no-go packet would end after buffer
+                #print('no-go packet would end after buffer', index + 3 + size, len(self.cache))
                 continue
 
             raw_payload = self.cache[index + 3:index + 3 + size]
@@ -489,7 +522,7 @@ async def screen_sender(patocol: WeatherProcessor):
     await patocol.st.run()
 
 
-async def mqtt_notifier():
+async def zmq_notifier():
     while True:
         # broadcast active devices
         print('faketify')

@@ -207,6 +207,57 @@ class WindSensor(BaseModule):
         
         return cls(data), cls.MODULE_SIZE
 
+def unpack(val, p, val_min, val_max):
+    if not val:
+        return float('NaN')
+    val -= 1
+    val *= (val_max - val_min) / (1 << p)
+    val += val_min
+
+    return val
+
+
+class THPCompound(BaseModule):
+    MODULE_ID = 0x11
+    # yup should be dynamic but here it is
+    # and received packed is "dumb"
+    MODULE_SIZE = 6 * 5 + 1
+
+    class THP:
+        def __init__(self, t, h, p):
+            self.t = t
+            self.h = h
+            self.p = p
+
+    def __init__(self, values):
+        self.values = values
+
+    @classmethod
+    def parse(cls, data):
+        if len(data) != cls.MODULE_SIZE:
+            raise Exception('INVALID SIZE')
+
+        values = []
+
+        entries = data[0]
+        data = data[1:]
+
+        for i in range(entries):
+            t = struct.unpack('H', data[0:2])[0]
+            h = data[2]
+            p = struct.unpack('H', data[3:5])[0]
+
+            print('RAW', t, h, p)
+            t = unpack(t, 16, -40, 85)
+            h = unpack(h, 8, 0, 100)
+            p = unpack(p, 16, 300, 110000)
+            print('UPK', t, h, p)
+            values.append(cls.THP(t, h, p))
+
+            data = data[5:]
+
+        return cls(entries), cls.MODULE_SIZE
+
 MODULES = [
     VoltSensor,
     TempSensor,
@@ -218,6 +269,7 @@ MODULES = [
     VOCSensor,
     SoilMoistureSensor,
     WindSensor,
+    THPCompound,
 ]
 
 _ID_TO_MODULE = {m.MODULE_ID: m for m in MODULES}
@@ -285,6 +337,7 @@ def parse(data: bytes):
 
     while sensors_num > 0 and offset < len(data):
         module_id = data[offset]
+        print('module-id', module_id)
         offset += 1
         module_factory = _ID_TO_MODULE.get(module_id)
         if not module_factory:
