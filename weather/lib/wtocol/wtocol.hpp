@@ -97,11 +97,14 @@ class GasSensor : public BaseSensor<0x08, GasSensorStorage> {};
 class VoltageSensor : public BaseSensor<0x05, uint32_t> {};
 class SoilMoisture : public BaseSensor<0x09, float> {};
 
-template <int32_t MIN, int32_t MAX, typename T, uint8_t Q = sizeof(T)>
+template <int32_t MIN, int32_t MAX, typename T, uint8_t Q = sizeof(T) * 8>
 struct Quantizer {
+  using STORAGE = T;
+
   // Value 0 is reserved for NAN, +/-INF, etc
   constexpr static const auto FACTOR =
       ((static_cast<uint32_t>(1) << Q) - 1) / static_cast<float>(MAX - MIN);
+
   constexpr static inline T quantize(float val) {
 
     if (std::isnan(val) || std::isinf(val)) {
@@ -119,35 +122,45 @@ struct Quantizer {
   }
 };
 
+// -40 .. 85
+using TempQuantizer = Quantizer<-40, 85, uint16_t>;
+// 0..100
+using HumidityQuantizer = Quantizer<0, 100, uint8_t>;
+// 300 .. 110000
+using PressureQuantizer = Quantizer<300, 110000, uint16_t>;
+
 struct THPCompoundSensorData {
 
-  using TempQuantizer = Quantizer<-40, 85, uint16_t>;
-  using HumidityQuantizer = Quantizer<0, 100, uint8_t>;
-  using PressureQuantizer = Quantizer<300, 110000, uint16_t>;
-
   struct thp_t {
-    // -40 .. 85
-    uint16_t t;
-    // 0..100
-    uint8_t h;
-    // 300 .. 110000
-    uint16_t p;
+    uint8_t bank_id;
+    TempQuantizer::STORAGE t;
+    HumidityQuantizer::STORAGE h;
+    PressureQuantizer::STORAGE p;
 
     void reset() {
+      bank_id = 0;
       t = 0;
       h = 0;
       p = 0;
     }
 
-    thp_t(): t(0), h(0), p(0) {}
+    thp_t(): bank_id(0), t(0), h(0), p(0) {}
 
-    thp_t(float t, float h, float p)
-        : t(TempQuantizer::quantize(t)),
+    thp_t(uint8_t bank_id, float t, float h, float p)
+        : bank_id(bank_id),
+          t(TempQuantizer::quantize(t)),
           h(HumidityQuantizer::quantize(h)),
           p(PressureQuantizer::quantize(p)) {}
 
+    thp_t(uint8_t bank_id, decltype(t) t, decltype(h) h, decltype(p) p)
+        : bank_id(bank_id),
+          t(t),
+          h(h),
+          p(p) {}
+
   } __attribute__((packed));
-  static_assert(sizeof(thp_t) == 5, "BAD");
+
+  static_assert(sizeof(thp_t) == 6, "BAD");
   constexpr static auto MAX_SENSORS = 6;
 
   uint8_t len;
@@ -163,13 +176,12 @@ struct THPCompoundSensorData {
     }
   }
 
-  bool add(const std::tuple<float, float, float> &data) {
+  bool add(const thp_t &data) {
     if (len >= MAX_SENSORS) {
       return false;
     }
 
-    sensors[len++] =
-        thp_t(std::get<0>(data), std::get<1>(data), std::get<2>(data));
+    sensors[len++] = data;
 
     return true;
   }

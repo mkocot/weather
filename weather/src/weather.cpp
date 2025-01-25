@@ -235,22 +235,22 @@ static void handle_send_message() {
 
 static void printValues() {
 #if W_BME_TYPE != W_BME_OFF
-  Serial.print("Temperature = ");
-  Serial.print(bme.readTemperature());
-  Serial.println(" *C");
+  // Serial.print("Temperature = ");
+  // Serial.print(bme.readTemperature());
+  // Serial.println(" *C");
 
-  Serial.print("Pressure = ");
+  // Serial.print("Pressure = ");
 
-  Serial.print(bme.readPressure() / 100.0F);
-  Serial.println(" hPa");
+  // Serial.print(bme.readPressure() / 100.0F);
+  // Serial.println(" hPa");
 
-  Serial.print("Humidity = ");
-  Serial.print(bme.readHumidity());
-  Serial.println(" %");
+  // Serial.print("Humidity = ");
+  // Serial.print(bme.readHumidity());
+  // Serial.println(" %");
 
-  Serial.print("inVolt = ");
-  Serial.print(inVolt);
-  Serial.println(" mV");
+  // Serial.print("inVolt = ");
+  // Serial.print(inVolt);
+  // Serial.println(" mV");
 #  if W_BSEC
 
   Serial.print("co2 = ");
