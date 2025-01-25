@@ -199,6 +199,34 @@ class SQLiteDB:
         data = c.fetchone()
         return DuckDB._wrap(data, sensors)
 
+    def rrdfetch_raw(self, name, start=TIME, sensors=None):
+        sensors = sensors or self._default_sensors
+
+        end_date = now()
+        start_date = end_date - timedelta(seconds=start)
+
+        start_date_utc = start_date.astimezone(timezone.utc)
+        end_date_utc = end_date.astimezone(timezone.utc)
+
+        values = ','.join(sensors)
+
+        QUERY = f'''
+        SELECT
+            {values}
+        FROM
+            "values"
+        WHERE
+            "timestamp" BETWEEN (STRFTIME('%s', :start) + 0) AND (STRFTIME('%s', :end) + 0)
+        '''
+
+        con = self._open(name)
+        c = con.execute(QUERY, {'end': end_date_utc, 'start': start_date_utc})
+        result = c.fetchall()
+
+        return {
+            v:[r[i] for r in result] for i, v in enumerate(sensors)
+        }
+
     def rrdfetch(self, name, start=TIME, sensors=None):
         sensors = sensors or self._default_sensors
 

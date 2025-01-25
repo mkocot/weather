@@ -170,6 +170,7 @@ int radio_hc12_setup() {
 int radio_hc12_send_all(const uint8_t *data, size_t len) {
   // just in case something is on wire (shouldn't)
   hc2.loop();
+  Serial.printf("Sending %d bytes \n", len);
   hc2.send(data, len);
   return 0;
 }
