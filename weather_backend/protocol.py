@@ -221,10 +221,16 @@ class THPCompound(BaseModule):
     MODULE_ID = 0x11
     # yup should be dynamic but here it is
     # and received packed is "dumb"
-    MODULE_SIZE = 6 * 5 + 1
+    MAX_SENSORS = 6
+    # bank_id(1) temp(2) hum(1) pres(2)
+    ENTRY_SIZE = 1 + 1 + 2 + 2
+    MODULE_SIZE = MAX_SENSORS * ENTRY_SIZE + 1
+
+    # bank_id 0xFF is special for PT100
 
     class THP:
-        def __init__(self, t, h, p):
+        def __init__(self, bank_id, t, h, p):
+            self.bank_id = bank_id
             self.t = t
             self.h = h
             self.p = p
@@ -243,18 +249,19 @@ class THPCompound(BaseModule):
         data = data[1:]
 
         for i in range(entries):
-            t = struct.unpack('H', data[0:2])[0]
-            h = data[2]
-            p = struct.unpack('H', data[3:5])[0]
+            bank_id = data[0]
+            t = struct.unpack('H', data[1:3])[0]
+            h = data[3]
+            p = struct.unpack('H', data[4:6])[0]
 
-            print('RAW', t, h, p)
+            print('RAW', bank_id, t, h, p)
             t = unpack(t, 16, -40, 85)
             h = unpack(h, 8, 0, 100)
             p = unpack(p, 16, 300, 110000)
-            print('UPK', t, h, p)
-            values.append(cls.THP(t, h, p))
+            print('UPK', bank_id, t, h, p)
+            values.append(cls.THP(bank_id, t, h, p))
 
-            data = data[5:]
+            data = data[6:]
 
         return cls(entries), cls.MODULE_SIZE
 
