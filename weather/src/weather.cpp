@@ -4,9 +4,9 @@
 #include <TaskScheduler.h>
 #include <wtocol.hpp>
 
-#include <ElegantOTA.h>
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
+#include <ElegantOTA.h>
 #include <WiFi.h>
 
 #undef W_SCHEDULER
@@ -91,7 +91,7 @@ static float waterSatDensity(float temp) {
 
 #if ESP8266 && !W_SOIL_MOISTURE
 ADC_MODE(ADC_VCC); /* init input voltage mesure */
-#endif /* ESP8266 && !W_SOIL_MOISTURE */
+#endif             /* ESP8266 && !W_SOIL_MOISTURE */
 
 uint32_t inVolt;
 
@@ -170,18 +170,24 @@ static void handle_read_sensor() {
   status.thp.reset();
 
   uint8_t index;
-  for (auto &r: bme.obtainReadings())
-  {
-    if (!status.thp.add(r))
-    {
+  for (auto &r: bme.obtainReadings()) {
+    if (!status.thp.add(r)) {
       Serial.println("Too much values!");
       break;
     }
   }
 
+  /* NOTE(m): This is dirty hack!
+     Lie about number of sensor so there is no "hack" on
+     the receiver side whan invalid data (NaN) will just be
+     discarded like for invalid reading. Too much to fix
+     and too litle time to make it nice and clean
+  */
+  status.thp.len = THPCompoundSensorData::MAX_SENSORS;
+
   replyPacketNew.set<THPCompoundSensor>(status.thp);
 
-#  if W_BSEC
+#if W_BSEC
   extraPacket.set<GasSensor>(GasSensorStorage(
       bme.gasResistance, bme.iaq, bme.staticIaq, bme.co2Equivalent,
       // each value is from 0 to 2 -> mask 0x03 and is uses 2 bits
@@ -192,7 +198,7 @@ static void handle_read_sensor() {
       (bme.iaqAccuracy & 0x03) | ((bme.staticIaqAccuracy & 0x03) << 2) |
           ((bme.co2Accuracy & 0x03) << 4)));
   // extraPacket.set<GasSensor>(
-      // {static_cast<float>(bme.gas_resistance), 0, 0, 0, 0xFF});
+  // {static_cast<float>(bme.gas_resistance), 0, 0, 0, 0xFF});
 #endif /* W_BSEC */
 
 #if W_SOIL_MOISTURE
@@ -283,7 +289,7 @@ static void printValues() {
   Serial.print(bme.staticIaqAccuracy);
   Serial.println();
 #  endif /* W_BSEC */
-#endif /* W_BME_TYPE != W_BME_OFF */
+#endif   /* W_BME_TYPE != W_BME_OFF */
   Serial.println();
 }
 
@@ -367,8 +373,7 @@ void loop() {
 
   auto now = millis();
 
-  if (now > next_probe)
-  {
+  if (now > next_probe) {
     handle_read_sensor();
     handle_send_message();
 

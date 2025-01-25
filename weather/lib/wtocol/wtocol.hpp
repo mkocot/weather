@@ -97,7 +97,7 @@ class GasSensor : public BaseSensor<0x08, GasSensorStorage> {};
 class VoltageSensor : public BaseSensor<0x05, uint32_t> {};
 class SoilMoisture : public BaseSensor<0x09, float> {};
 
-template <uint8_t Q, int32_t MIN, int32_t MAX, typename T>
+template <int32_t MIN, int32_t MAX, typename T, uint8_t Q = sizeof(T)>
 struct Quantizer {
   // Value 0 is reserved for NAN, +/-INF, etc
   constexpr static const auto FACTOR =
@@ -109,11 +109,9 @@ struct Quantizer {
     }
 
     // Clamp to MIN...MAX
-    if (val < MIN){
+    if (val < MIN) {
       val = MIN;
-    }
-    else if (val > MAX)
-    {
+    } else if (val > MAX) {
       val = MAX;
     }
 
@@ -122,6 +120,11 @@ struct Quantizer {
 };
 
 struct THPCompoundSensorData {
+
+  using TempQuantizer = Quantizer<-40, 85, uint16_t>;
+  using HumidityQuantizer = Quantizer<0, 100, uint8_t>;
+  using PressureQuantizer = Quantizer<300, 110000, uint16_t>;
+
   struct thp_t {
     // -40 .. 85
     uint16_t t;
@@ -139,9 +142,9 @@ struct THPCompoundSensorData {
     thp_t(): t(0), h(0), p(0) {}
 
     thp_t(float t, float h, float p)
-        : t(Quantizer<16, -40, 85, uint16_t>::quantize(t)),
-          h(Quantizer<8, 0, 100, uint8_t>::quantize(h)),
-          p(Quantizer<16, 300, 110000, uint16_t>::quantize(p)) {}
+        : t(TempQuantizer::quantize(t)),
+          h(HumidityQuantizer::quantize(h)),
+          p(PressureQuantizer::quantize(p)) {}
 
   } __attribute__((packed));
   static_assert(sizeof(thp_t) == 5, "BAD");
@@ -150,12 +153,9 @@ struct THPCompoundSensorData {
   uint8_t len;
   thp_t sensors[MAX_SENSORS];
 
-  THPCompoundSensorData(): len(0) {
-    reset();
-  }
+  THPCompoundSensorData(): len(0) { reset(); }
 
-  void reset()
-  {
+  void reset() {
     len = 0;
     for (int i = 0; i < MAX_SENSORS; i++) {
       auto &s = sensors[i];
@@ -163,14 +163,13 @@ struct THPCompoundSensorData {
     }
   }
 
-  bool add(const std::tuple<float, float, float> &data)
-  {
-    if (len >= MAX_SENSORS)
-    {
+  bool add(const std::tuple<float, float, float> &data) {
+    if (len >= MAX_SENSORS) {
       return false;
     }
 
-    sensors[len++] = thp_t(std::get<0>(data), std::get<1>(data), std::get<2>(data));
+    sensors[len++] =
+        thp_t(std::get<0>(data), std::get<1>(data), std::get<2>(data));
 
     return true;
   }
