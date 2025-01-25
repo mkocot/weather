@@ -20,6 +20,9 @@ static_dir = Path(args.static_dir) / 'web/graph'
 def get_rrd() -> fetch.SQLiteDB:
     return fetch.SQLiteDB(args.data_dir)
 
+@bottle.get("/api/v1/sensor/<name>")
+def api_sensor(name):
+    return "999"
 
 @bottle.get("/<name>")
 def serve_static(name):
@@ -49,7 +52,7 @@ def filter_data(data):
         values = data[m]
         # create fake values
         for i in range(len(values)):
-            if values[i]:
+            if values[i] is None:
                 continue
             # ok we got datapoint without value
             if i > 0 and values[i - 1]:
@@ -61,10 +64,10 @@ def filter_data(data):
             next_value = None
             for j in range(i + 1, len(values)):
                 next_value = values[j]
-                if next_value:
+                if next_value is not None:
                     break
                 segments += 1
-            if not next_value:
+            if next_value is None:
                 # no more valid point after index 'i'
                 break
             # lerp values

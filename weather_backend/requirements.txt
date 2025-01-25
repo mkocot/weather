@@ -1,5 +1,5 @@
 # data bridge
-asyncio-mqtt
+pyzmq > 15
 Pillow
 toml
 pyserial-asyncio
