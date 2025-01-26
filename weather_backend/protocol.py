@@ -1,6 +1,8 @@
 import struct
 import codecs
 from io import BytesIO
+import math
+from typing import final
 
 VERSION = 1
 VERSION_2 = 2
@@ -216,7 +218,7 @@ def unpack(val, p, val_min, val_max):
 
     return val
 
-
+@final
 class THPCompound(BaseModule):
     MODULE_ID = 0x11
     # yup should be dynamic but here it is
@@ -228,14 +230,16 @@ class THPCompound(BaseModule):
 
     # bank_id 0xFF is special for PT100
 
+    @final
     class THP:
-        def __init__(self, bank_id, t, h, p):
+        def __init__(self, bank_id: int, t: float, h: float, p: float):
             self.bank_id = bank_id
             self.t = t
             self.h = h
             self.p = p
 
-    def __init__(self, values):
+    def __init__(self, values: list[THP]):
+        super().__init__()
         self.values = values
 
     @classmethod
@@ -243,7 +247,7 @@ class THPCompound(BaseModule):
         if len(data) != cls.MODULE_SIZE:
             raise Exception('INVALID SIZE')
 
-        values = []
+        values: list[THPCompound.THP] = []
 
         entries = data[0]
         data = data[1:]
@@ -263,7 +267,27 @@ class THPCompound(BaseModule):
 
             data = data[6:]
 
-        return cls(entries), cls.MODULE_SIZE
+        values.sort(key = lambda x: x.bank_id)
+
+        return cls(values), cls.MODULE_SIZE
+
+    def decompose(self):
+        sensors: list[tuple[int, BaseModule]] = []
+
+        for r in self.values:
+            if not math.isnan(r.t):
+                v = TempSensor(r.t)
+                sensors.append((r.bank_id, v))
+
+            if not math.isnan(r.h):
+                v = HumiditySensor(r.h)
+                sensors.append((r.bank_id, v))
+
+            if not math.isnan(r.p):
+                v = PressureSensor(r.p)
+                sensors.append((r.bank_id, v))
+
+        return sensors
 
 MODULES = [
     VoltSensor,

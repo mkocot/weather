@@ -8,7 +8,6 @@ import socket
 import struct
 import sys
 import time
-import traceback
 import math
 from os import mkdir
 from os.path import exists, isdir
@@ -33,7 +32,7 @@ if USE_ZMQ:
 stype2name = {
     TempSensor.MODULE_ID: ('temperature', fetch.Temp),
     # scale Pa to hPa
-    PressureSensor.MODULE_ID: ('pressure', lambda v: fetch.Pres(v * 0.01)),
+    PressureSensor.MODULE_ID: ('pressure', lambda v, id=None: fetch.Pres(v * 0.01)),
     HumiditySensor.MODULE_ID: ('humidity', fetch.Humidity),
     # scale mV to V
     VoltSensor.MODULE_ID: ('volt', lambda v: fetch.Volt(v * 0.001)),
@@ -229,6 +228,33 @@ class WeatherProcessor:
         )
         return x
 
+    def _convert_thp(self, sid: THPCompound):
+        # This is just for "presentation" layer
+        # it might change in future as it's not straight reauired
+        # and might mess something
+        required_defaults = set(('temperature', 'pressure', 'humidity'))
+
+        sensors = {}
+
+        for bank_id, sensor in sid.decompose():
+            module_name, converter = stype2name[sensor.MODULE_ID]
+            if not converter:
+                print('Unsupported module id:', sid.MODULE_ID)
+                continue
+
+            converted = converter(sensor.value, id=bank_id)
+
+            sensors[converted.name] = converted
+
+            if module_name in required_defaults:
+                print('Missing default for:', module_name, 'create from', converted.name)
+                v = converter(sensor.value)
+                sensors[v.name] = v
+
+                required_defaults.remove(module_name)
+
+        return sensors
+
     async def process(self, data, *, addr=None):
         try:
             df = protocol.parse(data)
@@ -256,8 +282,7 @@ class WeatherProcessor:
                 continue
 
             if module_name == 'thp':
-                print('THP')
-                continue
+                sensors = self._convert_thp(sid)
             elif module_name == 'voc':
                 sensors['iaq_static'] = fetch.StaticIaq(sid.iaq_static)
                 sensors['iaq'] = fetch.Iaq(sid.iaq)
