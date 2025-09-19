@@ -413,6 +413,7 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
         # 2 -> raw_size is at index + 2
         # 3 -> payload starts at index + 3
         for index in range(len(self.cache) - 2):
+            packet_start = index
             raw_version = self.cache[index]
             version_zero = (raw_version & 0b00001111) >> 0
             version = (raw_version & 0b11110000) >> 4
@@ -420,7 +421,7 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
             if version_zero != 0:
                 # reserved bits are set
                 continue
-            if version != 1:
+            if version not in (1, 2):
                 # unexpected version
                 continue
 
@@ -436,15 +437,16 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
                 # size is too big, only 63 bytes
                 continue
 
-            raw_routing = self.cache[index + 2]
-            packet_to = (raw_routing & 0b00001111) >> 0
-            packet_from = (raw_routing & 0b11110000) >> 4
-            # print(packet_from, '->', packet_to)
-
-            if packet_to == packet_from:
-                # no-go: packet from self to self?
-                print(packet_from, '->', packet_to)
-                continue
+            if version == 1:
+                raw_routing = self.cache[index + 2]
+                packet_to = (raw_routing & 0b00001111) >> 0
+                packet_from = (raw_routing & 0b11110000) >> 4
+                if packet_to == packet_from:
+                    # no-go: packet from self to self?
+                    # print(packet_from, '->', packet_to)
+                    continue
+            else:
+                index -= 1
 
             if index + 3 + size >= len(self.cache):
                 # no-go packet would end after buffer
@@ -454,7 +456,7 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
             raw_payload = self.cache[index + 3:index + 3 + size]
             packet_crc8 = self.cache[index + 3 + size]
 
-            caclulated_crc8 = libscrc.dvb_s2(self.cache[index:index + 3 + size])
+            caclulated_crc8 = libscrc.dvb_s2(self.cache[packet_start:index + 3 + size])
             if caclulated_crc8 != packet_crc8:
                 continue
             # print("packet VALID")
