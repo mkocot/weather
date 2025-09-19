@@ -3,6 +3,7 @@ import codecs
 from io import BytesIO
 import math
 from typing import final
+from collections import OrderedDict
 
 VERSION = 1
 VERSION_2 = 2
@@ -19,7 +20,7 @@ class BaseModule():
         pass
 
     @classmethod
-    def parse(cls, data):
+    def parse(cls, data: bytes):
         raise NotImplementedError("parse")
 
     def serialize(self):
@@ -49,7 +50,7 @@ class SimpleFloat32(Simple4Bytes):
     BYTE_FORMAT = "f"
 
     @classmethod
-    def parse(cls, data):
+    def parse(cls, data: bytes):
         value, size = super().parse(data)
         return cls(value), size
 
@@ -95,7 +96,7 @@ class HumiditySensor(SimpleFloat32):
 class PressureSensor(BaseModule):
     MODULE_ID = 0x02
 
-    def __init__(self, value):
+    def __init__(self, value: float):
         super().__init__()
         self.value = value
 
@@ -195,7 +196,7 @@ class WindSensor(BaseModule):
     MODULE_ID = 0x10
     MODULE_SIZE = 6
     value = [0 for _ in range(MODULE_SIZE)]
-    def __init__(self, ticks):
+    def __init__(self, ticks: list[float]):
         if len(ticks) != len(self.value):
             raise Exception('invalid size')
 
@@ -206,7 +207,12 @@ class WindSensor(BaseModule):
     def parse(cls, data):
         if len(data) < cls.MODULE_SIZE:
             raise Exception("too short")
-        
+        # SCALE TICKS !
+        # scale incorrecly pased 2x ticks
+        # sensor reads 2 ticks per revolution
+        # and scale bucket size revolutions to revolution per second
+        data = [v / (2 * (60 / cls.MODULE_SIZE)) for v in data]
+
         return cls(data), cls.MODULE_SIZE
 
 def unpack(val, p, val_min, val_max):
@@ -272,22 +278,104 @@ class THPCompound(BaseModule):
         return cls(values), cls.MODULE_SIZE
 
     def decompose(self):
-        sensors: list[tuple[int, BaseModule]] = []
+        # Keep original (already sorted) order of banks
+        banks: OrderedDict[int, list[list[BaseModule]]] = OrderedDict()
 
         for r in self.values:
+            converted= []
             if not math.isnan(r.t):
-                v = TempSensor(r.t)
-                sensors.append((r.bank_id, v))
+                converted.append(TempSensor(r.t))
 
             if not math.isnan(r.h):
-                v = HumiditySensor(r.h)
-                sensors.append((r.bank_id, v))
+                converted.append(HumiditySensor(r.h))
 
             if not math.isnan(r.p):
-                v = PressureSensor(r.p)
-                sensors.append((r.bank_id, v))
+                converted.append(PressureSensor(r.p))
+
+            banks[r.bank_id] = banks.get(r.bank_id, []) + [converted]
+
+        sensors: list[tuple[tuple[int, int] | int, BaseModule]] = []
+        # group by banks
+        for bank_id, entries in banks.items():
+            print(bank_id, entries)
+
+            if len(entries) == 1:
+                sensors.extend((bank_id, e) for e in entries[0])
+                continue
+
+            for index, values in enumerate(entries):
+                sensors.extend(((bank_id, index), e) for e in values)
 
         return sensors
+
+@final
+class WindSpeedDirection(BaseModule):
+    MODULE_ID = 0x12
+    MODULE_SIZE = 13
+    BUCKETS = 6
+    value = [(0.0, 0.0) for _ in range(BUCKETS)]
+
+    def __init__(self, speed_and_dir: list[tuple[float, float]]):
+        super().__init__()
+
+        if len(speed_and_dir) != len(self.value):
+            raise Exception('invalid size')
+
+        for i, v in enumerate(speed_and_dir):
+            self.value[i] = (float(v[0]), float(v[1]))
+
+    @staticmethod
+    def get_speed_dir_func(data: bytes|bytearray, index:int) -> tuple[int, float]:
+        """Functional version that works on bytearray/bytes"""
+        assert 0 <= index < 6
+        
+        # Calculate bit offset: index * 18
+        bit_offset = index * 18
+        byte_offset = bit_offset // 8
+        bit_remainder = bit_offset % 8
+        
+        combined = 0
+        
+        # Reconstruct the 18-bit value from bytes
+        bits_remaining = 18
+        for i in range(3):
+            current_byte = byte_offset + i
+            if current_byte >= len(data):
+                break  # Don't go beyond array bounds
+                
+            bits_to_take = min(8 - bit_remainder, 18 - i * 8)
+            
+            mask = (1 << bits_to_take) - 1
+            value = (data[current_byte] >> bit_remainder) & mask
+            
+            combined = (combined << bits_to_take) | value
+            bit_remainder = 0
+
+            bits_remaining -= bits_to_take
+            if not bits_remaining:
+                break
+        
+        speed = (combined >> 8) & 0x3FF    # Extract speed (10 bits)
+        direction = combined & 0xFF        # Extract direction (8 bits)
+        return (speed, direction)
+
+    @classmethod
+    def parse(cls, data):
+        if len(data) < cls.MODULE_SIZE:
+            raise Exception("too short")
+
+        decoded: list[tuple[int, float]]= []
+        for i in range(cls.BUCKETS):
+            speed, dir = cls.get_speed_dir_func(data, i)
+            # 187 -> 262
+            # decode dir where PI == 128 to angle
+            dir = 180 * (dir / 128)
+            # scale rotations per X seconds to rotations per seconds
+            speed /= (60 / cls.BUCKETS)
+            decoded.append((speed, dir))
+        
+        return cls(decoded), cls.MODULE_SIZE
+
 
 MODULES = [
     VoltSensor,
@@ -301,6 +389,7 @@ MODULES = [
     SoilMoistureSensor,
     WindSensor,
     THPCompound,
+    WindSpeedDirection,
 ]
 
 _ID_TO_MODULE = {m.MODULE_ID: m for m in MODULES}
@@ -319,7 +408,7 @@ HEADER_SIZES = {
 class DataFrame:
     def __init__(self):
         self.device_id = ''
-        self.modules = []
+        self.modules:list[BaseModule] = []
         self.version = 0
         self.message_to_broker = False
 

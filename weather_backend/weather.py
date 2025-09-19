@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 
 import asyncio
+from collections.abc import Sequence
 import datetime
 import json
 import logging
+from numbers import Number
 import socket
 import struct
 import sys
@@ -20,7 +22,7 @@ import fetch
 import protocol
 from config import load_config
 from protocol import (HumiditySensor, PressureSensor, SoilMoistureSensor,
-                      TempSensor, VOCSensor, VoltSensor, WindSensor, THPCompound)
+                      TempSensor, VOCSensor, VoltSensor, WindSensor, THPCompound, WindSpeedDirection)
 
 USE_ZMQ = True
 
@@ -38,9 +40,9 @@ stype2name = {
     VoltSensor.MODULE_ID: ('volt', lambda v: fetch.Volt(v * 0.001)),
     SoilMoistureSensor.MODULE_ID: ('soil', fetch.Humidity),
     VOCSensor.MODULE_ID: ('voc', None),
-    WindSensor.MODULE_ID: ('wind', fetch.WindTick),
+    WindSensor.MODULE_ID: ('wind', fetch.WindSpeed),
     THPCompound.MODULE_ID: ('thp', None),
-
+    WindSpeedDirection.MODULE_ID: ('wind+dir', None),
 }
 
 logging.basicConfig(format='%(asctime)s %(message)s')
@@ -51,10 +53,10 @@ storage_path = cfg['storage']['path']
 if not exists(storage_path):
     mkdir(storage_path)
 if not isdir(storage_path):
-    print(f'rrd path is not directory: {storage_path}')
+    print(f'storage path is not directory: {storage_path}')
     exit(1)
 
-RRD = fetch.SQLiteDB(storage_path, ro=True)
+DB = fetch.SQLiteDB(storage_path, ro=True)
 
 
 class ScreenInfo:
@@ -69,7 +71,7 @@ class ScreenInfo:
 class ScreenThread:
     _lock = asyncio.Lock()
     _screens = {}
-    _rrd = RRD
+    _db = DB
     _keep_looping = True
 
     def __init__(self, sock):
@@ -107,7 +109,7 @@ class ScreenThread:
             selected_sensor = sensors[sensor_id]
             name = cfg['device'][sensor_id]['name']
             # get data from last 8 hours
-            raw_data = self._rrd.rrdfetch(sensor_id, start=8 * 60 * 60)
+            raw_data = self._db.fetch(sensor_id, start=8 * 60 * 60)
             # states
             # 0 -> overview
             # 1 -> temperature graph
@@ -265,18 +267,16 @@ class WeatherProcessor:
         if not df.message_to_broker:
             return
 
-        rcvtime = datetime.datetime.utcnow().isoformat()
+        rcvtime = datetime.datetime.now(datetime.UTC).isoformat()
         sensors = {}
 
-        # NOTE(m): We could just use set of sensors values converted to
-        # RRD types not dict of names
         for sid in df.modules:
             if sid.MODULE_ID not in stype2name:
                 print('Unsupported module id:', sid.MODULE_ID)
                 continue
 
             module_name, converter = stype2name[sid.MODULE_ID]
-
+    
             if sid.MODULE_ID == protocol.ScreenSensor.MODULE_ID:
                 await self.st.add_screen(df.device_id, addr)
                 continue
@@ -288,38 +288,42 @@ class WeatherProcessor:
                 sensors['iaq'] = fetch.Iaq(sid.iaq)
                 sensors['co2'] = fetch.Co2(sid.co2)
                 sensors['gas_raw'] = fetch.GasResistance(sid.gas_raw)
-            elif module_name == 'wind':
+            elif module_name == 'wind' or module_name == 'wind+dir':
                 # store in db with 10s "delays" counted backward from last entry
                 snapshot_time = fetch.now()
 
                 reversed_sensors = []
-                for i in reversed(range(len(sid.value))):
-                    if sid.value[i]:
-                        reversed_sensors.append((fetch.WindTick(sid.value[i]), snapshot_time))
+                for v in reversed(sid.value):
+                    if v:
+                        if isinstance(v, Number):
+                            # old one
+                            reversed_sensors.append(((fetch.WindSpeed(v),), snapshot_time))
+                        elif isinstance(v, Sequence) and len(v) == 2:
+                            reversed_sensors.append(((fetch.WindSpeed(v[0]), fetch.WindDirection(v[1])), snapshot_time))
+                        else:
+                            print("unknown value", v)
                     snapshot_time -= datetime.timedelta(seconds=10)
 
-                for wind_tick, current_time in reversed(reversed_sensors):
-                    RRD.add(df.device_id, (wind_tick, ), current_time=current_time)
+                for value, current_time in reversed(reversed_sensors):
+                    DB.add(df.device_id, value, current_time=current_time)
 
-                # it's measured in ticks per 10seconds
-                # full rotations create 2 ticks
-                # (n*0.5) / 10 = x/60
-                # 30n = 10x
-                # x = 3n
-                # radius is 65mm = 0.065m
+                # it's finally fixed and sensor contains already prescaled
+                # values so no more thinking about bucket size and ticsk
+                # radius is 60mm = 0.06m
                 # V = 2 * pi * r * RPM/60
-                # V = pi * 0.065 * (n / 10) m/s
-                # V = pi * 0.065 * (n / 10) * 3.6 km/h
-                mean = sum(sid.value) / len(sid.value)
+                # V = 2 * pi * 0.06 * n m/s
+                # V = 2 * pi * 0.06 * n * 3.6 km/h
+                speeds = [x[0][0].value for x in reversed_sensors]
+                mean = sum(speeds) / len(speeds)
                 def _to_kmh(v):
-                    r = 0.065
-                    return math.pi * r * (v / 10) * 3.6
+                    r = 0.06
+                    return 2 * math.pi * r * v * 3.6
                 print('wind sensor',
-                        'min', min(sid.value),
+                        'min', min(speeds),
                         'mean', mean,
                         'mean (km/h)', _to_kmh(mean),
-                        'max', max(sid.value),
-                        'max (km/h)', _to_kmh(max(sid.value))
+                        'max', max(speeds),
+                        'max (km/h)', _to_kmh(max(speeds))
                 )
                 continue
             elif module_name:
@@ -327,7 +331,7 @@ class WeatherProcessor:
             else:
                 print('should not happen')
 
-        RRD.add(df.device_id, sensors.values())
+        DB.add(df.device_id, sensors.values())
 
         # broadcast
         if USE_ZMQ:
@@ -561,6 +565,10 @@ async def main():
     # create tasks
     # asyncio.seri
     processor = WeatherProcessor(cfg)
+
+    NEW_DATA = b'W\x02\x02\x01\x12\x00.\x03.\x01-\x01.\x01\x00-\x01-'
+    await processor.process(NEW_DATA)
+
     error = await processor.run()
     print('should not be here', error)
     # exit(1)

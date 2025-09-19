@@ -3,6 +3,7 @@ from os.path import join
 from datetime import timedelta, datetime as dt, timezone
 from typing import final
 import sqlite3
+from warnings import deprecated
 
 TIME = 24 * 60 * 60
 ENABLE_DUCK_DB = False
@@ -18,9 +19,9 @@ class Gauge:
     DS_TIME: int = 0
     DS_STORAGE: str = "FLOAT"
 
-    def __init__(self, value, *, id: int | None = None):
+    def __init__(self, value, *, id: tuple[int,...]|int | None = None):
         self.value = value
-        self.id: int | None = id
+        self.id: tuple[int,...]| int | None = id
 
     def __str__(self):
         return str(self.value)
@@ -39,8 +40,13 @@ class Gauge:
 
     @property
     def name(self):
-        return self.DS_NAME if self.id is None else f"{self.DS_NAME}_{self.id}"
+        if self.id is None:
+            return self.DS_NAME
 
+        if isinstance(self.id, int):
+            return f"{self.DS_NAME}_{self.id}"
+
+        return '_'.join([self.DS_NAME] + [str(x) for x in self.id])
 
 @final
 class Temp(Gauge):
@@ -48,7 +54,7 @@ class Temp(Gauge):
     DS_RANGE = (-30, 50)
     DS_TIME = 20
 
-    def __init__(self, value: float, id: int|None = None):
+    def __init__(self, value: float, id: tuple[int,...]|int|None = None):
         super().__init__(value, id=id)
 
 
@@ -58,7 +64,7 @@ class Humidity(Gauge):
     DS_RANGE = (0, 100)
     DS_TIME = 20
 
-    def __init__(self, value: float, id: int|None = None):
+    def __init__(self, value: float, id: tuple[int,...]|int|None = None):
         super().__init__(value, id=id)
 
 
@@ -131,13 +137,35 @@ class GasResistance(Gauge):
 
 
 @final
+@deprecated("Prescale values and use WindSpeed instead")
 class WindTick(Gauge):
+    '''This has been deprecated because ticks were stored 'as-is' and received
+    data was counted 2x, when in should be divided by 2 as there are 2 ticks
+    per revolution and also without scaling to 'per seconds' it's stored as
+    per 10 seconds, making it too confusing to use without shooting itself
+    '''
     DS_NAME = "wind"
     DS_RANGE = (0, 255)
     DS_TIME = 20
 
     def __init__(self, value: float):
         super().__init__(value)
+
+@final
+class WindSpeed(Gauge):
+    '''wind ticks expecting one tick per revolution, and scaled to rotation per seconds'''
+    DS_NAME = "wind_speed"
+
+    def __init__(self, value:float, *, id: tuple[int, ...] | int | None = None):
+        super().__init__(value, id=id)
+
+@final
+class WindDirection(Gauge):
+    '''wind direction 0..360'''
+    DS_NAME = "wind_direction"
+
+    def __init__(self, value:float, *, id: tuple[int, ...] | int | None = None):
+        super().__init__(value, id=id)
 
 
 @final
@@ -226,7 +254,7 @@ class SQLiteDB:
         data = c.fetchone()
         return SQLiteDB._wrap(data, sensors)
 
-    def rrdfetch_raw(self, name, start=TIME, sensors=None):
+    def fetch_raw(self, name, start=TIME, sensors=None):
         sensors = sensors or self._default_sensors
 
         end_date = now()
@@ -252,7 +280,7 @@ class SQLiteDB:
 
         return {v: [r[i] for r in result] for i, v in enumerate(sensors)}
 
-    def rrdfetch(self, name, start=TIME, sensors=None):
+    def fetch(self, name, start=TIME, sensors=None):
         sensors = sensors or self._default_sensors
 
         end_date = now()

@@ -17,7 +17,7 @@ args = parser.parse_args()
 
 static_dir = Path(args.static_dir) / 'web/graph'
 
-def get_rrd() -> fetch.SQLiteDB:
+def get_db() -> fetch.SQLiteDB:
     return fetch.SQLiteDB(args.data_dir)
 
 @bottle.get("/api/v1/sensor/<name>")
@@ -36,7 +36,7 @@ def index():
 
 @bottle.get("/data/<id>/last.json")
 def data_last(id: str):
-    data = get_rrd().lastupdate(id)
+    data = get_db().lastupdate(id)
     return data
 
 
@@ -76,17 +76,17 @@ def filter_data(data):
     return data
 
 
-def _last_from_sensors(rrd, sensors):
-    result = [rrd.last(x) for x in sensors]
+def _last_from_sensors(db, sensors):
+    result = [db.last(x) for x in sensors]
     lasts = max([x for x in result if x])
     if not lasts:
         lasts = 0
     return datetime.datetime.fromtimestamp(lasts, tz=datetime.timezone.utc)
 
 
-def _data_from_sensors(rrd, sensors):
+def _data_from_sensors(db, sensors):
     result = {}
-    datas = [rrd.rrdfetch_raw(x) for x in sensors]
+    datas = [db.fetch_raw(x) for x in sensors]
 
     for idx in range(len(sensors)):
         s = sensors[idx]
@@ -103,10 +103,10 @@ def _data_from_sensors(rrd, sensors):
 
 @bottle.get("/data.json")
 def data():
-    rrd = get_rrd()
+    db = get_db()
     # ec62609d4998 - outside
     sensors = ["e09806259a66", "24a1603048ba", "ec62609d4998"]
-    last = _last_from_sensors(rrd, sensors)
+    last = _last_from_sensors(db, sensors)
     lm = last.strftime("%a, %d %b %Y %H:%M:%S GMT")
     ims = bottle.request.environ.get('HTTP_IF_MODIFIED_SINCE')
     if ims:
@@ -118,7 +118,7 @@ def data():
         }
         return bottle.HTTPResponse(status=304, **headers)
 
-    resp = _data_from_sensors(rrd, sensors)
+    resp = _data_from_sensors(db, sensors)
 
     # debug compare clocks
     resp = json.dumps(resp)
