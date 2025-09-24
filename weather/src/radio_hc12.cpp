@@ -1,3 +1,6 @@
+#include "config.h"
+
+#if W_RADIO_MODE == W_RADIO_HC12
 #include "radio_hc12.hpp"
 #include <Arduino.h>
 #include <crc8.h>
@@ -174,3 +177,4 @@ int radio_hc12_send_all(const uint8_t *data, size_t len) {
   hc2.send(data, len);
   return 0;
 }
+#endif

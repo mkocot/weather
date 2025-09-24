@@ -4,10 +4,20 @@
 #include <TaskScheduler.h>
 #include <wtocol.hpp>
 
+#if ESP32
+#include <WiFi.h>
+#else
+#include <ESP8266WiFi.h>
+#endif
+
+#if W_OTA
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <ElegantOTA.h>
-#include <WiFi.h>
+
+AsyncWebServer server(80);
+#endif
+
 
 #undef W_SCHEDULER
 #define W_SCHEDULER (0)
@@ -25,7 +35,6 @@ struct {
   int radio_send{0};
 } status;
 
-AsyncWebServer server(80);
 static void handle_read_sensor();
 static void handle_send_message();
 
@@ -103,7 +112,13 @@ auto extraPacket = SensorsPacketizer<GasSensor>();
 
 auto replyPacketNew = SensorsPacketizer<
 #if W_BME_TYPE
+#if W_BME_TYPE == W_BME_TUNNEL_SPI
     THPCompoundSensor
+#else
+    PressureSensor,
+    TemperatureSensor,
+    HumiditySensor
+#endif
 #  if W_AC_TYPE == W_AC_BATTERY
     ,
     VoltageSensor
@@ -167,10 +182,12 @@ static void handle_read_sensor() {
 #endif
 
   bme.measure();
-  status.thp.reset();
 
+  #if W_BME_TYPE == W_BME_TUNNEL_SPI
+  status.thp.reset();
   uint8_t index;
   for (auto &r: bme.obtainReadings()) {
+    Serial.printf("bank=%d; t=%f; h=%f; p=%f\n", r.bank_id, static_cast<float>(r.t), static_cast<float>(r.h), static_cast<float>(r.p));
     if (!status.thp.add(r)) {
       Serial.println("Too much values!");
       break;
@@ -184,8 +201,13 @@ static void handle_read_sensor() {
      and too litle time to make it nice and clean
   */
   status.thp.len = THPCompoundSensorData::MAX_SENSORS;
-
   replyPacketNew.set<THPCompoundSensor>(status.thp);
+  #else
+  replyPacketNew.set<TemperatureSensor>(bme.readTemperature());
+  replyPacketNew.set<HumiditySensor>(bme.readHumidity());
+  replyPacketNew.set<PressureSensor>(bme.readPressure());
+  #endif
+
 
 #if W_BSEC
   extraPacket.set<GasSensor>(GasSensorStorage(
@@ -311,13 +333,15 @@ void setup() {
 #if W_DEBUG
   delay(2000);
 #endif
+#if W_OTA
   // enable hidden fifi and ota
   WiFi.persistent(false);
   WiFi.softAP(W_OTA_WIFI_NAME, W_OTA_WIFI_PASS, 6, 1);
+  #if ESP32
   WiFi.setTxPower(WIFI_POWER_2dBm);
+  #endif
   Serial.print("WiFi IP: ");
   Serial.println(WiFi.softAPIP());
-
   server.on("/restart", HTTP_GET, [](AsyncWebServerRequest *request) {
     // radio_rfm69_reset_hacky_restart();
     ESP.restart();
@@ -341,6 +365,7 @@ void setup() {
 
   ElegantOTA.begin(&server);
   server.begin();
+  #endif
 
   setupBME280();
 

@@ -3,11 +3,14 @@
 
 #include <Arduino.h>
 
-#define W_OTA 1
+#ifndef W_OTA
+#define W_OTA 0
+#endif
 
 #define W_RADIO_WIFI 1
 #define W_RADIO_RFM69 69
 #define W_RADIO_HC12 12
+#define W_RADIO_ESPNOW 2
 
 #ifndef W_RADIO_MODE
 #define W_RADIO_MODE (W_RADIO_WIFI)
@@ -20,12 +23,17 @@
 #define W_WIFI_PACKET W_WIFI_PACKET_BROADCAST
 #endif
 
-#if W_RADIO_MODE != W_RADIO_WIFI && W_RADIO_MODE != W_RADIO_RFM69 && W_RADIO_MODE != W_RADIO_HC12
+#if W_RADIO_MODE != W_RADIO_WIFI && W_RADIO_MODE != W_RADIO_RFM69 && W_RADIO_MODE != W_RADIO_HC12 && W_RADIO_MODE != W_RADIO_ESPNOW
 #error Invalid W_RADIO_MODE
+#endif
+
+#if W_RADIO_MODE == W_RADIO_ESPNOW && W_OTA
+#error OTA is not compatible with ESPNOW
 #endif
 
 #ifndef W_DEBUG
 #define W_DEBUG (0)
+#undef W_VERBOSE
 #endif
 
 /* Enable (1) verbose mode */

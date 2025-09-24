@@ -1,4 +1,10 @@
 #include <Arduino.h>
+#include <crc8.h>
+
+#ifdef RADIO_ESPNOW
+#include <WiFi.h>
+#include <esp_now.h>
+#else
 #include <RFM69.h>
 #include <RadioLib.h>
 
@@ -8,8 +14,6 @@
 RFM69 radio = RFM69(SS, D2, true);
 
 // uint8_t packet[62]; // RADIOLIB_RF69_MAX_PACKET_LENGTH];
-
-#define DUMB_FORWARDER_DEBUG (0)
 
 volatile bool receivedData = false;
 volatile bool enableIrq = true;
@@ -22,12 +26,36 @@ IRAM_ATTR void irqPoked() {
   enableIrq = false;
 }
 
+#endif
+volatile int receivedData = 0;
+uint8_t packet[62];
+#define DUMB_FORWARDER_DEBUG (0)
+
+void esp_now_received(const uint8_t *mac, const uint8_t *data, int len)
+{
+  if (receivedData) {
+    // Old data was not used, discard new
+    Serial.println("M old data in buffer");
+    return;
+  }
+
+  memcpy(packet, data, len);
+  receivedData = len;
+}
+
 void setup() {
   // put your setup code here, to run once:
   // Serial.begin(9600);
   Serial.begin(115200);
   delay(2000);
   Serial.println("SETUP");
+#if RADIO_ESPNOW
+  WiFi.mode(WIFI_STA);
+  Serial.print("M StationID ");
+  Serial.println(WiFi.macAddress());
+  esp_now_init();
+  esp_now_register_recv_cb(esp_now_received);
+#else
 #if !RADIO_A
   auto ret = radio.begin();
   Serial.printf("M radio.begin() = %d\n", ret);
@@ -64,6 +92,8 @@ void setup() {
   radio.setHighPower(true);
   radio.readAllRegs();
 #endif
+#endif
+
 }
 static inline void emitHex(uint8_t val) {
   if (val < 15) {
@@ -78,6 +108,40 @@ void loop() {
 // M diagnostic messages
 // D length data (data and length in hex, no space between data and length)
 // length is SINGLE byte
+#if RADIO_ESPNOW
+  if (!receivedData) {
+    return;
+  }
+    #if 1
+    uint8_t version = 2 << 4;
+    Serial.write(version);
+    uint8_t size = receivedData << 2;
+    Serial.write(size);
+
+    Serial.write(packet, receivedData);
+
+    uint8_t payload_crc8 = crc8(CRC8_POLY_DVB_S2, 0x00, &version, 1);
+    payload_crc8 = crc8(CRC8_POLY_DVB_S2, payload_crc8, &size, 1);
+    payload_crc8 = crc8(CRC8_POLY_DVB_S2, payload_crc8, packet, receivedData);
+    Serial.write(payload_crc8);
+
+    #else
+    Serial.print("D");
+    emitHex(receivedData);
+
+    // NOTE: RadioLib emits first byte as TARGET_ID (0)
+    // probably, as this is target from sender
+
+    for (size_t i = 0; i < receivedData; i++) {
+      emitHex(packet[i]);
+    }
+    #endif
+
+    Serial.println();
+    Serial.flush();
+
+    receivedData = 0;
+#else
 #if RADIO_A
   if (!radio.receiveDone()) {
     return;
@@ -156,5 +220,6 @@ void loop() {
     return;
   }
   Serial.println("GOT PACKET!");
+#endif
 #endif
 }

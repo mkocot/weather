@@ -1,3 +1,6 @@
+#include "config.hpp"
+
+#if W_RADIO_MODE == W_RADIO_RF69
 #include <stddef.h>
 #include <stdint.h>
 
@@ -173,4 +176,5 @@ int radio_rfm69_id(uint8_t *data) {
   data[5] = (nodeId >> 40) & 0xFF;
   return 0;
 }
+#endif
 #endif

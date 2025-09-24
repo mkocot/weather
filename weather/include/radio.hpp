@@ -12,11 +12,18 @@
 #define radio_id radio_hc12_id
 #define radio_send_all radio_hc12_send_all
 #define radio_send radio_hc12_send
-#else
+#elif W_RADIO_MODE == W_RADIO_WIFI
 #include "radio_wifi.hpp"
 #define radio_setup radio_wifi_setup
 #define radio_id radio_wifi_id
 #define radio_send_all radio_wifi_send_all
+#elif W_RADIO_MODE == W_RADIO_ESPNOW
+#include "radio_espnow.hpp"
+#define radio_setup radio_espnow_setup
+#define radio_id radio_espnow_id
+#define radio_send_all radio_espnow_send_all
+#else
+#error INVALID RADIO
 #endif /* W_RADIO_MODE */
 
 struct radio {

@@ -101,9 +101,14 @@ template <int32_t MIN, int32_t MAX, typename T, uint8_t Q = sizeof(T) * 8>
 struct Quantizer {
   using STORAGE = T;
 
+  static_assert(std::is_pod<STORAGE>::value, "STORAGE not POD");
+
+  STORAGE quantized;
+
   // Value 0 is reserved for NAN, +/-INF, etc
   constexpr static const auto FACTOR =
       ((static_cast<uint32_t>(1) << Q) - 1) / static_cast<float>(MAX - MIN);
+  constexpr static const auto INV_FACTOR = 1.0 / FACTOR;
 
   constexpr static inline T quantize(float val) {
 
@@ -120,7 +125,44 @@ struct Quantizer {
 
     return 1 + static_cast<T>((val - MIN) * FACTOR + 0.5f);
   }
+
+  constexpr static inline float dequantize(T val) {
+    if (val == 0) {
+      return NAN;
+    }
+
+    float converted = ((val - 1) * INV_FACTOR + MIN);
+    if (converted < MIN) {
+      converted = MIN;
+    } else if (converted > MAX) {
+      converted = MAX;
+    }
+
+    return converted;
+  }
+
+  explicit operator float() const {
+    return dequantize(quantized);
+  }
+
+  explicit operator STORAGE() const {
+    return quantized;
+  }
+
+  // Quantizer& operator = (const uint32_t &x) {
+  //   quantized = x;
+  //   return *this;
+  // }
+
+  Quantizer& operator = (const float &x) {
+    quantized = quantize(x);
+    return *this;
+  }
 };
+
+
+constexpr auto x = sizeof(Quantizer<0, 0, uint8_t>);
+static_assert(std::is_pod<Quantizer<20, 30, uint16_t>>::value, "?");
 
 // -40 .. 85
 using TempQuantizer = Quantizer<-40, 85, uint16_t>;
@@ -129,13 +171,17 @@ using HumidityQuantizer = Quantizer<0, 100, uint8_t>;
 // 300 .. 110000
 using PressureQuantizer = Quantizer<300, 110000, uint16_t>;
 
+static_assert(std::is_pod<TempQuantizer>::value, "Temp not POD");
+static_assert(std::is_pod<HumidityQuantizer>::value, "Hum not POD");
+static_assert(std::is_pod<PressureQuantizer>::value, "Press not POD");
+
 struct THPCompoundSensorData {
 
   struct thp_t {
     uint8_t bank_id;
-    TempQuantizer::STORAGE t;
-    HumidityQuantizer::STORAGE h;
-    PressureQuantizer::STORAGE p;
+    TempQuantizer t;
+    HumidityQuantizer h;
+    PressureQuantizer p;
 
     void reset() {
       bank_id = 0;
@@ -144,19 +190,21 @@ struct THPCompoundSensorData {
       p = 0;
     }
 
-    thp_t(): bank_id(0), t(0), h(0), p(0) {}
+    thp_t(): bank_id(0), t {0}, h{0}, p{0} {}
 
     thp_t(uint8_t bank_id, float t, float h, float p)
-        : bank_id(bank_id),
-          t(TempQuantizer::quantize(t)),
-          h(HumidityQuantizer::quantize(h)),
-          p(PressureQuantizer::quantize(p)) {}
+        : bank_id(bank_id)
+          {
+            this->t = t;
+            this->h = h;
+            this->p = p;
+          }
 
     thp_t(uint8_t bank_id, decltype(t) t, decltype(h) h, decltype(p) p)
         : bank_id(bank_id),
-          t(t),
-          h(h),
-          p(p) {}
+          t{t},
+          h{h},
+          p{p} {}
 
   } __attribute__((packed));
 
