@@ -17,7 +17,6 @@ from os.path import exists, isdir
 import serial_asyncio
 import libscrc
 
-import draw
 import fetch
 import protocol
 from config import load_config
@@ -396,14 +395,14 @@ class WeaterServerProtocol(asyncio.DatagramProtocol):
 def udp_receiver(patocol):
     loop = asyncio.get_running_loop()
     for sock in patocol.sock:
-        async def x():
+        async def x(sock):
             emergency_stop = loop.create_future()
             transport, protocol = await loop.create_datagram_endpoint(lambda: WeaterServerProtocol(emergency_stop, patocol), sock=sock)
             await protocol.emergency_stop
             transport.close()
             sock.close()
             print('boom')
-        yield x()
+        yield x(sock)
 
 async def file_receiver(patocol):
     loop = asyncio.get_running_loop()
@@ -420,28 +419,33 @@ async def file_receiver(patocol):
 
 
 def uart_receiver(patocol):
+    loop = asyncio.get_running_loop()
     for bind in cfg['bind']:
         if 'serial_dev' not in bind:
             continue
-        serial_dev = bind.get('serial_dev')
+
+        serial_dev = str(bind['serial_dev'])
         if not serial_dev:
             continue
-        serial_baud = int(bind.get('serial_baud', 115200))
-        loop = asyncio.get_running_loop()
-        emergency_stop = loop.create_future()
-        serial_protocol = bind.get('serial_protocol', 'HEX')
-        if serial_protocol == 'HEX':
-            proto = WeaterServerUARTProtocol(emergency_stop, patocol)
-        else:
-            proto = WeatherServerHC12UARTProtocol(emergency_stop, patocol)
-        # soo there is some special options that should be enabled to
-        # make serial happy?
-        coro = serial_asyncio.create_serial_connection(
-            loop, lambda: proto, serial_dev, baudrate=serial_baud)
-        async def x():
+
+        async def x(serial_baud:int, serial_protocol:str, serial_dev:str):
+            print('uart_receiver', serial_baud, serial_protocol)
+            emergency_stop = loop.create_future()
+            if serial_protocol == 'HEX':
+                proto = WeaterServerUARTProtocol(emergency_stop, patocol)
+            else:
+                proto = WeatherServerHC12UARTProtocol(emergency_stop, patocol)
+            # soo there is some special options that should be enabled to
+            # make serial happy?
+            coro = serial_asyncio.create_serial_connection(
+                loop, lambda: proto, serial_dev, baudrate=serial_baud)
             transport, protocol = await coro
             await protocol.emergency_stop
-        yield x()
+        yield x(
+            serial_baud=int(bind.get('serial_baud', 115200)),
+            serial_protocol=bind.get('serial_protocol', 'HC12'),
+            serial_dev=serial_dev,
+        )
 
 
 async def zmq_notifier():
