@@ -3,10 +3,6 @@
 
 #include <Arduino.h>
 
-#ifndef W_OTA
-#define W_OTA 0
-#endif
-
 #define W_RADIO_WIFI 1
 #define W_RADIO_RFM69 69
 #define W_RADIO_HC12 12
@@ -100,6 +96,14 @@
 
 #if !(W_AC_TYPE == W_AC_BATTERY || W_AC_TYPE == W_AC_DIRECT)
 #error Invalid W_AC_TYPE
+#endif
+
+#ifndef W_OTA
+#define W_OTA 0
+#endif
+
+#if W_OTA && W_AC_TYPE == W_AC_BATTERY
+#error OTA is not supported when powered from BATTERY (W_AC_TYPE == W_AC_BATTERY)
 #endif
 
 #ifndef W_SOIL_MOISTURE

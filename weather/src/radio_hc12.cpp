@@ -1,4 +1,4 @@
-#include "config.h"
+#include "config.hpp"
 
 #if W_RADIO_MODE == W_RADIO_HC12
 #include "radio_hc12.hpp"

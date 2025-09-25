@@ -166,6 +166,7 @@ static int batteryVoltage() {
 
 static void handle_read_sensor() {
   /* NOTE: We are using deepSleep so every iteration starts with setup() */
+#if W_AC_TYPE == W_AC_BATTERY
   inVolt = batteryVoltage();
 #if 0
   /* USB powered: inVolt ~ 3000
@@ -175,11 +176,10 @@ static void handle_read_sensor() {
     ESP.deepSleep(ESP.deepSleepMax());
     return;
   }
-#endif
+#endif /* if 0 */
 
-#if W_AC_TYPE == W_BATTERY
   replyPacketNew.set<VoltageSensor>(inVolt);
-#endif
+#endif /* W_AC_TYPE == W_AC_BETTERY */
 
   bme.measure();
 
@@ -406,13 +406,13 @@ void loop() {
   }
 
   ElegantOTA.loop();
-#else
+#else /* W_AC_TYPE == W_AC_DIRECT */
   handle_read_sensor();
   handle_send_message();
 #  if W_VERBOSE
   Serial.println("going into deep sleep mode");
-#  endif
+#  endif /* W_VERBOSE */
   ESP.deepSleep(W_REPORT_INTERVAL);
-#endif
+#endif /* W_AC_TYPE == W_AC_DIRECT */
   delay(100);
 }
