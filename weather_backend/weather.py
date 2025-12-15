@@ -195,7 +195,25 @@ class WeatherProcessor:
                             print("unknown value", v)
                     snapshot_time -= datetime.timedelta(seconds=10)
 
+                if len(reversed_sensors[-1][0]) == 2:
+                    # ((speed, direction), time)
+                    # there is some weird bug with first speed value
+                    # keep diraction, but replace speed with next-one
+                    avg = sum(x[0][0].value for x in reversed_sensors[:-1]) / (len(reversed_sensors) - 1)
+
+                    ((first_speed, first_dir), first_timestamp) = reversed_sensors[-1]
+
+                    print("AVG:", avg, "first (aka last)", first_speed)
+
+                    if first_speed.value > 4 * avg:
+                        print("botched first speed value, replace with next")
+                        reversed_sensors[-1] = (
+                                (reversed_sensors[-2][0][0], first_dir),
+                                first_timestamp,
+                        )
+
                 for value, current_time in reversed(reversed_sensors):
+                    print('wind', value)
                     DB.add(df.device_id, value, current_time=current_time)
 
                 # it's finally fixed and sensor contains already prescaled
@@ -303,7 +321,7 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
             #print('cache:', self.cache, '(too short)')
             return None
 
-        print('cache:', self.cache)
+        #print('cache:', self.cache)
         # 1 -> as raw_size is at index + 1
         # 2 -> raw_size is at index + 2
         # 3 -> payload starts at index + 3
@@ -467,3 +485,4 @@ async def main():
 
 
 asyncio.run(main())
+
