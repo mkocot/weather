@@ -311,8 +311,8 @@ class THPCompound(BaseModule):
 @final
 class WindSpeedDirection(BaseModule):
     MODULE_ID = 0x12
-    MODULE_SIZE = 13
     BUCKETS = 6
+    MODULE_SIZE = int((10 + 8) * BUCKETS / 8 + 0.5)
     value = [(0.0, 0.0) for _ in range(BUCKETS)]
 
     def __init__(self, speed_and_dir: list[tuple[float, float]]):
@@ -325,7 +325,36 @@ class WindSpeedDirection(BaseModule):
             self.value[i] = (float(v[0]), float(v[1]))
 
     @staticmethod
-    def get_speed_dir_func(data: bytes|bytearray, index:int) -> tuple[int, float]:
+    def get_speed_dir_v2(data: bytes|bytearray, index: int) -> tuple[int, int]:
+        """
+        Read an 18-bit value from a packed byte array at a given index.
+        data: bytes or bytearray containing packed 18-bit values
+        index: which 18-bit entry to read (0-based)
+        Returns: integer value (0–0x3FFFF)
+        """
+        bit_offset = index * 18
+        byte_pos = bit_offset // 8
+        bit_pos = bit_offset % 8
+
+        # Read only the bytes that exist, pad with 0 if necessary
+        val = 0
+        for i in range(4):  # 18 bits can span up to 3 bytes, but read 4 to be safe
+            if byte_pos + i < len(data):
+                val |= data[byte_pos + i] << (8 * i)
+            else:
+                val |= 0  # pad with 0 if out-of-bounds
+
+
+        # Shift down to align desired bits and mask
+        val = (val >> bit_pos) & 0x3FFFF
+        direction = (val & 0xFF)
+        speed = (val >> 8) & 0x3FF
+
+        return (speed, direction)
+
+
+    @staticmethod
+    def get_speed_dir_v1(data: bytes|bytearray, index:int) -> tuple[int, float]:
         """Functional version that works on bytearray/bytes"""
         assert 0 <= index < 6
         
@@ -366,7 +395,9 @@ class WindSpeedDirection(BaseModule):
 
         decoded: list[tuple[int, float]]= []
         for i in range(cls.BUCKETS):
-            speed, dir = cls.get_speed_dir_func(data, i)
+            speed, dir = cls.get_speed_dir_v2(data, i)
+            #speed_v1, dir_v1 = cls.get_speed_dir_v1(data, i)
+            #print(f'i={i} speed={speed}({speed_v1}) dir={dir}({dir_v1})')
             # 187 -> 262
             # decode dir where PI == 128 to angle
             dir = 180 * (dir / 128)
