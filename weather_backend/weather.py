@@ -20,8 +20,8 @@ import libscrc
 import fetch
 import protocol
 from config import load_config
-from protocol import (HumiditySensor, PressureSensor, SoilMoistureSensor,
-                      TempSensor, VOCSensor, VoltSensor, WindSensor, THPCompound, WindSpeedDirection)
+from protocol import (HumiditySensor, PressureSensor, SoilMoistureSensor, THPCompoundV2,
+                      TempSensor, VOCSensor, VoltSensor, WindSensor, THPCompound, WindSpeedDirection, BaseModule)
 
 DEBUG = False
 USE_ZMQ = True
@@ -30,12 +30,16 @@ if USE_ZMQ:
     import zmq
     import zmq.asyncio
 
+def with_id(func):
+    def _f(sensor: BaseModule):
+        return func(value=sensor.value, id=sensor.id)
+    return _f
 
 stype2name = {
-    TempSensor.MODULE_ID: ('temperature', fetch.Temp),
+    TempSensor.MODULE_ID: ('temperature', with_id(fetch.Temp)),
     # scale Pa to hPa
-    PressureSensor.MODULE_ID: ('pressure', lambda v, id=None: fetch.Pres(v * 0.01)),
-    HumiditySensor.MODULE_ID: ('humidity', fetch.Humidity),
+    PressureSensor.MODULE_ID: ('pressure', with_id(lambda value, id=None: fetch.Pres(value * 0.01, id=id))),
+    HumiditySensor.MODULE_ID: ('humidity', with_id(fetch.Humidity)),
     # scale mV to V
     VoltSensor.MODULE_ID: ('volt', lambda v: fetch.Volt(v * 0.001)),
     SoilMoistureSensor.MODULE_ID: ('soil', fetch.Humidity),
@@ -43,6 +47,7 @@ stype2name = {
     WindSensor.MODULE_ID: ('wind', fetch.WindSpeed),
     THPCompound.MODULE_ID: ('thp', None),
     WindSpeedDirection.MODULE_ID: ('wind+dir', None),
+    THPCompoundV2.MODULE_ID: ('thp2', None)
 }
 
 logging.basicConfig(format='%(asctime)s %(message)s')
@@ -111,7 +116,7 @@ class WeatherProcessor:
 
     async def run(self):
         # 1) connect to broker
-        # udp_task = file_receiver(self) 
+        # udp_task = file_receiver(self)
         udp_task = list(udp_receiver(self))
         uart_task = list(uart_receiver(self))
         tasks  = udp_task + uart_task
@@ -167,7 +172,7 @@ class WeatherProcessor:
                 continue
 
             module_name, converter = stype2name[sid.MODULE_ID]
-    
+
             if sid.MODULE_ID == protocol.ScreenSensor.MODULE_ID:
                 await self.st.add_screen(df.device_id, addr)
                 continue
@@ -236,7 +241,11 @@ class WeatherProcessor:
                 )
                 continue
             elif module_name:
-                sensors[module_name] = converter(sid.value)
+                if converter:
+                    result = converter(sid)
+                    sensors[getattr(result, 'name', module_name)] = result
+                else:
+                    sensors[module_name] = sid.value
             else:
                 print('should not happen')
 
@@ -259,69 +268,27 @@ class WeatherProcessor:
             sys.stdout.flush()
 
 
-class WeaterServerUARTProtocol(asyncio.Protocol):
+class WeatherServerHC12UARTProtocol(asyncio.Protocol):
     def __init__(self, emergency_stop, processor):
         self.emergency_stop = emergency_stop
         self.processor = processor
         self.cache = bytearray()
 
-    def connection_made(self, transport):
-        self.transport = transport
-        print('port opened', transport)
-
-    def data_received(self, data):
-        self.cache.extend(data)
-        line_end = b'\n'
-        while True:
-            head, sep, tail = self.cache.partition(line_end)
-            if not sep:
-                break
-            self.cache = tail
-
-            line = head.decode('ascii').strip()
-            if line and line[0] == 'D' and 'RSSI' in line:
-                print(line)
-            if not line or line[0] != 'D':
-                continue
-            line = line[1:]
-            if DEBUG:
-                print(line, len(line))
-            if len(line) < 4:
-                print('too short', line)
-                continue
-
-            expected_length = int(line[0:2], base=16)
-            hex_data = line[2:]
-
-            if len(hex_data) != expected_length * 2:
-                print(
-                    f'data length missmatch got {len(hex_data)}, wanted {expected_length * 2}')
-                continue
-            try:
-                decoded = bytes.fromhex(hex_data)
-            except Exception:
-                print('unable to decoder serial')
-                pass
-            update_task = asyncio.get_running_loop().create_task(
-                self.processor.process(decoded))
-            update_task.add_done_callback(lambda x: None)
-
     def connection_lost(self, exc):
         print('port closed')
         self.emergency_stop.set_exception(exc)
 
-
-class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
-    def __init__(self, emergency_stop, processor):
-        super().__init__(emergency_stop, processor)
+    def connection_made(self, transport):
+        self.transport = transport
+        print('port opened', transport)
 
     def _try_parse(self):
         # 3 bytes header, 1 byte checksum
         if len(self.cache) < 4:
-            #print('cache:', self.cache, '(too short)')
+            print('cache:', self.cache, '(too short)')
             return None
 
-        #print('cache:', self.cache)
+        print('cache:', self.cache)
         # 1 -> as raw_size is at index + 1
         # 2 -> raw_size is at index + 2
         # 3 -> payload starts at index + 3
@@ -341,7 +308,7 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
             raw_size = self.cache[index + 1]
             size_zero = (raw_size & 0b00000011) >> 0
             size = (raw_size & 0b11111100) >> 2
-            # print(size, size_zero)
+            print(size, size_zero)
 
             if size_zero != 0:
                 # reserved bits are set
@@ -356,14 +323,17 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
                 packet_from = (raw_routing & 0b11110000) >> 4
                 if packet_to == packet_from:
                     # no-go: packet from self to self?
-                    # print(packet_from, '->', packet_to)
+                    print(packet_from, '->', packet_to)
                     continue
-            else:
+            elif version == 2:
                 index -= 1
+            else:
+                print("not supported version", version)
+                continue
 
             if index + 3 + size >= len(self.cache):
                 # no-go packet would end after buffer
-                #print('no-go packet would end after buffer', index + 3 + size, len(self.cache))
+                print('no-go packet would end after buffer', index + 3 + size, len(self.cache))
                 continue
 
             raw_payload = self.cache[index + 3:index + 3 + size]
@@ -372,7 +342,7 @@ class WeatherServerHC12UARTProtocol(WeaterServerUARTProtocol):
             caclulated_crc8 = libscrc.dvb_s2(self.cache[packet_start:index + 3 + size])
             if caclulated_crc8 != packet_crc8:
                 continue
-            # print("packet VALID")
+            print("packet VALID")
             # roll buffer to left by packet size
             self.cache = self.cache[index + 3 + size + 1:]
             return bytes(raw_payload)
@@ -422,20 +392,6 @@ def udp_receiver(patocol):
             print('boom')
         yield x(sock)
 
-async def file_receiver(patocol):
-    loop = asyncio.get_running_loop()
-    emergency_stop = loop.create_future()
-    prot = WeaterServerProtocol(emergency_stop, patocol)
-
-    with open('/home/nfinity/git/weather/packets.pkt') as f:
-        for line in f:
-            data = int(line, 16).to_bytes(32, 'big')
-            prot.datagram_received(data, ('127.0.0.1', 6969))
-    await emergency_stop
-    
-
-
-
 def uart_receiver(patocol):
     loop = asyncio.get_running_loop()
     for bind in cfg['bind']:
@@ -449,10 +405,10 @@ def uart_receiver(patocol):
         async def x(serial_baud:int, serial_protocol:str, serial_dev:str):
             print('uart_receiver', serial_baud, serial_protocol)
             emergency_stop = loop.create_future()
-            if serial_protocol == 'HEX':
-                proto = WeaterServerUARTProtocol(emergency_stop, patocol)
-            else:
+            if serial_protocol == 'HC12':
                 proto = WeatherServerHC12UARTProtocol(emergency_stop, patocol)
+            else:
+                raise Exception('unsupported protocol')
             # soo there is some special options that should be enabled to
             # make serial happy?
             coro = serial_asyncio.create_serial_connection(
@@ -472,17 +428,16 @@ async def zmq_notifier():
         print('faketify')
         await asyncio.sleep(30)
 
+if __name__ == '__main__':
+    async def main():
+        # rsock, wsock = asyncio.create
+        # create tasks
+        # asyncio.seri
+        processor = WeatherProcessor(cfg)
 
-async def main():
-    # rsock, wsock = asyncio.create
-    # create tasks
-    # asyncio.seri
-    processor = WeatherProcessor(cfg)
-
-    error = await processor.run()
-    print('should not be here', error)
-    # exit(1)
+        error = await processor.run()
+        print('should not be here', error)
+        # exit(1)
 
 
-asyncio.run(main())
-
+    asyncio.run(main())

@@ -121,7 +121,7 @@ public:
       readings.push_back(*reinterpret_cast<const reading_t*>(payload_start));
       payload_start += sizeof(reading_t);
 
-#if W_VERBOSE
+#if 0 && W_VERBOSE
       const auto &last = readings.at(readings.size() - 1);
       Serial.print("Parsing response: temp=");
       Serial.print(std::get<0>(last));

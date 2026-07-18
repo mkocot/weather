@@ -16,8 +16,8 @@ class BaseModule():
     MODULE_ID = 0x0
     MODULE_SIZE = 4
 
-    def __init__(self):
-        pass
+    def __init__(self, id=None):
+        self._id = id
 
     @classmethod
     def parse(cls, data: bytes):
@@ -26,14 +26,28 @@ class BaseModule():
     def serialize(self):
         raise NotImplementedError("serialize")
 
+    @property
+    def value(self):
+        raise NotImplementedError('value')
+
+    @property
+    def id(self):
+        return self._id
+
 # don't use directly
 
 
 class Simple4Bytes(BaseModule):
     BYTE_FORMAT = ""
 
-    def __init__(self, value):
-        self.value = value
+    def __init__(self, value, **kwargs):
+        super().__init__(**kwargs)
+
+        self._value = value
+
+    @property
+    def value(self):
+        return self._value
 
     @classmethod
     def parse(cls, data: bytes):
@@ -49,6 +63,9 @@ class Simple4Bytes(BaseModule):
 class SimpleFloat32(Simple4Bytes):
     BYTE_FORMAT = "f"
 
+    def __init__(self, value, **kwargs):
+        super().__init__(value, **kwargs)
+
     @classmethod
     def parse(cls, data: bytes):
         value, size = super().parse(data)
@@ -60,6 +77,9 @@ class SimpleFloat32(Simple4Bytes):
 class SimpleUint32(Simple4Bytes):
     BYTE_FORMAT = "I"
 
+    def __init__(self, value, **kwargs):
+        super().__init__(value, **kwargs)
+
     @classmethod
     def parse(cls, data):
         value, size = super().parse(data)
@@ -68,6 +88,9 @@ class SimpleUint32(Simple4Bytes):
 
 class SimpleInt32(Simple4Bytes):
     BYTE_FORMAT = "i"
+
+    def __init__(self, value, **kwargs):
+        super().__init__(value, **kwargs)
 
     @classmethod
     def parse(cls, data):
@@ -78,9 +101,15 @@ class SimpleInt32(Simple4Bytes):
 class VoltSensor(SimpleUint32):
     MODULE_ID = 0x05
 
+    def __init__(self, value, **kwargs):
+        super().__init__(value, **kwargs)
+
 
 class TempSensor(SimpleFloat32):
     MODULE_ID = 0x01
+
+    def __init__(self, value, **kwargs):
+        super().__init__(value, **kwargs)
 
     def __str__(self):
         return f'temp: {self.value}'
@@ -89,6 +118,9 @@ class TempSensor(SimpleFloat32):
 class HumiditySensor(SimpleFloat32):
     MODULE_ID = 0x03
 
+    def __init__(self, value, **kwargs):
+        super().__init__(value, **kwargs)
+
     def __str__(self):
         return f'hum: {self.value}'
 
@@ -96,9 +128,14 @@ class HumiditySensor(SimpleFloat32):
 class PressureSensor(BaseModule):
     MODULE_ID = 0x02
 
-    def __init__(self, value: float):
-        super().__init__()
-        self.value = value
+    def __init__(self, value: float, **kwargs):
+        super().__init__(**kwargs)
+
+        self._value = value
+
+    @property
+    def value(self):
+        return self._value
 
     @classmethod
     def parse(cls, data):
@@ -195,14 +232,20 @@ class TimeSensor(SimpleInt32):
 class WindSensor(BaseModule):
     MODULE_ID = 0x10
     MODULE_SIZE = 6
-    value = [0 for _ in range(MODULE_SIZE)]
+
+    _value = [0 for _ in range(MODULE_SIZE)]
+
     def __init__(self, ticks: list[float]):
         if len(ticks) != len(self.value):
             raise Exception('invalid size')
 
         for i, v in enumerate(ticks):
-            self.value[i] = int(v)
-    
+            self._value[i] = int(v)
+
+    @property
+    def value(self):
+        return self._value
+
     @classmethod
     def parse(cls, data):
         if len(data) < cls.MODULE_SIZE:
@@ -275,7 +318,37 @@ class THPCompound(BaseModule):
 
         values.sort(key = lambda x: x.bank_id)
 
+        intermediate = cls(values)
+        converted = intermediate._convert_thp()
+
         return cls(values), cls.MODULE_SIZE
+
+    def _convert_thp(self):
+        # This is just for "presentation" layer
+        # it might change in future as it's not straight reauired
+        # and might mess something
+        required_defaults = set(('temperature', 'pressure', 'humidity'))
+
+        sensors = {}
+
+        for bank_id, sensor in self.decompose():
+            module_name, converter = stype2name[sensor.MODULE_ID]
+            if not converter:
+                print('Unsupported module id:', sid.MODULE_ID)
+                continue
+
+            converted = converter(sensor.value, id=bank_id)
+
+            sensors[converted.name] = converted
+
+            if module_name in required_defaults:
+                print('Missing default for:', module_name, 'create from', converted.name)
+                v = converter(sensor.value)
+                sensors[v.name] = v
+
+                required_defaults.remove(module_name)
+
+        return sensors
 
     def decompose(self):
         # Keep original (already sorted) order of banks
@@ -313,7 +386,7 @@ class WindSpeedDirection(BaseModule):
     MODULE_ID = 0x12
     BUCKETS = 6
     MODULE_SIZE = int((10 + 8) * BUCKETS / 8 + 0.5)
-    value = [(0.0, 0.0) for _ in range(BUCKETS)]
+    _value = [(0.0, 0.0) for _ in range(BUCKETS)]
 
     def __init__(self, speed_and_dir: list[tuple[float, float]]):
         super().__init__()
@@ -322,7 +395,11 @@ class WindSpeedDirection(BaseModule):
             raise Exception('invalid size')
 
         for i, v in enumerate(speed_and_dir):
-            self.value[i] = (float(v[0]), float(v[1]))
+            self._value[i] = (float(v[0]), float(v[1]))
+
+    @property
+    def value(self):
+        return self._value
 
     @staticmethod
     def get_speed_dir_v2(data: bytes|bytearray, index: int) -> tuple[int, int]:
@@ -357,33 +434,33 @@ class WindSpeedDirection(BaseModule):
     def get_speed_dir_v1(data: bytes|bytearray, index:int) -> tuple[int, float]:
         """Functional version that works on bytearray/bytes"""
         assert 0 <= index < 6
-        
+
         # Calculate bit offset: index * 18
         bit_offset = index * 18
         byte_offset = bit_offset // 8
         bit_remainder = bit_offset % 8
-        
+
         combined = 0
-        
+
         # Reconstruct the 18-bit value from bytes
         bits_remaining = 18
         for i in range(3):
             current_byte = byte_offset + i
             if current_byte >= len(data):
                 break  # Don't go beyond array bounds
-                
+
             bits_to_take = min(8 - bit_remainder, 18 - i * 8)
-            
+
             mask = (1 << bits_to_take) - 1
             value = (data[current_byte] >> bit_remainder) & mask
-            
+
             combined = (combined << bits_to_take) | value
             bit_remainder = 0
 
             bits_remaining -= bits_to_take
             if not bits_remaining:
                 break
-        
+
         speed = (combined >> 8) & 0x3FF    # Extract speed (10 bits)
         direction = combined & 0xFF        # Extract direction (8 bits)
         return (speed, direction)
@@ -404,8 +481,212 @@ class WindSpeedDirection(BaseModule):
             # scale rotations per X seconds to rotations per seconds
             speed /= (60 / cls.BUCKETS)
             decoded.append((speed, dir))
-        
+
         return cls(decoded), cls.MODULE_SIZE
+
+class THPCompoundV2(BaseModule):
+    MODULE_ID = 0x13
+    class NamedTempSensor(TempSensor):
+        def __init__(self, value, label):
+            super().__init__(value)
+            self.label = label
+
+    class NamedPressureSensor(PressureSensor):
+        def __init__(self, value, label):
+            super().__init__(value)
+            self.label = label
+
+    class NamedHumiditySensor(HumiditySensor):
+        def __init__(self, value, label):
+            super().__init__(value)
+            self.label = label
+
+    '''Raw packet:
+        temperature_config(count:4, pt100:1, reserved:3)
+        temperature_banks_config(v0:2, v1:2, v2:2, v3:2) if 0 < temperature_config.count <= 4
+        temperature_banks_config(v0:2, v1:2, v2:2, v3:2, v4:2, v5:2, v6:2, v7:2) if temperature_config.count > 4
+        uint16[temperature_config.count]
+        uint16[temperature_config.pt100]
+        pressure_config(count:4, reserved: 4)
+        pressure_banks_config(v0:2, v1:2, v2:2, v3:2) if 0 < pressure_config.count <= 4
+        pressure_banks_config(v0:2, v1:2, v2:2, v3:2, v4:2, v5:2, v6:2, v7:2) if pressure_config.count > 4
+        uint16[pressure_config.count]
+        humidity_config(count:4, reserved: 4)
+        humidity_banks_config(v0:2, v1:2, v2:2, v3:2) if 0 < humidity_config.count <= 4
+        humidity_banks_config(v0:2, v1:2, v2:2, v3:2, v4:2, v5:2, v6:2, v7:2) if humidity_config.count > 4
+        uint8[humidity_config.count]
+    '''
+
+    def __init__(self, bank, t, h, p):
+        super().__init__()
+        self.t = t
+        self.h = h
+        self.p = p
+        self.bank = bank
+
+    @classmethod
+    def parse(cls, data) -> tuple[list['THPCompoundV2'], int]:
+        T_MIN = -40
+        T_MAX = 85
+        H_MIN = 0
+        H_MAX = 100
+        P_MIN = 88000
+        P_MAX = 110000
+
+        def parse_t_cfg(data):
+            count = data & 0x0F
+            pt100 = (data >> 4) & 0x01
+            return (count, pt100)
+
+        def parse_r_cfg(data):
+            count = data & 0x0F
+            return (count,)
+
+        def parse_banks_cfg(data):
+            def parse(data):
+                banks = []
+                for i in range(4):
+                    banks.append((data >> (2 * i)) & 0x3)
+                return banks
+
+            banks = []
+            for d in data:
+                banks.extend(parse(d))
+
+            return banks
+
+        def unpack(val, p, val_min, val_max):
+            if isinstance(val, bytes):
+                if len(val) == 2:
+                    val = struct.unpack('<H', val)[0]
+                elif len(val) == 1:
+                    val = val[0]
+                else:
+                    raise ValueError('Only 1 or 2 bytes are supported')
+
+            val *= (val_max - val_min) / (1 << p)
+            val += val_min
+
+            return val
+
+        def unpack_temp(val):
+            return unpack(val, 16, T_MIN, T_MAX)
+
+        def unpack_hum(val):
+            return unpack(val, 8, H_MIN, H_MAX)
+
+        def unpack_pres(val):
+            return unpack(val, 16, P_MIN, P_MAX)
+
+        t_sensors = []
+        pt100_sensor = None
+        p_sensors = []
+        h_sensors = []
+
+        deserialzers = (
+            (parse_t_cfg, t_sensors, ),
+            (parse_r_cfg, p_sensors, ),
+            (parse_r_cfg, h_sensors, ),
+        )
+
+        index = 0
+        t_len, pt100 = parse_t_cfg(data[index])
+        index += 1
+
+        if t_len:
+            size = 2 if t_len > 4 else 1
+            banks = parse_banks_cfg(data[index:index+size])
+            index += size
+
+            for i in range(t_len):
+                t_sensors.append((banks[i], data[index:index+2]))
+                index += 2
+
+        if pt100:
+            pt100_sensor = data[index:index+2]
+            index += 2
+
+        p_len, = parse_r_cfg(data[index])
+        index += 1
+
+        if p_len:
+            size = 2 if p_len > 4 else 1
+            banks = parse_banks_cfg(data[index:index+size])
+            index += size
+
+            for i in range(p_len):
+                p_sensors.append((banks[i], data[index:index+2]))
+                index += 2
+
+        h_len, = parse_r_cfg(data[index])
+        index += 1
+
+        if h_len:
+            size = 2 if h_len > 4 else 1
+            banks = parse_banks_cfg(data[index:index+size])
+            index += size
+
+            for i in range(h_len):
+                h_sensors.append((banks[i], data[index:index+1]))
+                index += 1
+
+        upacker = (
+            (t_sensors, unpack_temp, TempSensor),
+            (p_sensors, unpack_pres, PressureSensor),
+            (h_sensors, unpack_hum, HumiditySensor),
+        )
+
+        values = []
+
+        for s, u, c in upacker:
+            number = 0
+            last_bank_id = 0
+            for bank_id, raw in s:
+                if bank_id != last_bank_id:
+                    last_bank_id = bank_id
+                    number = 0
+
+                v = u(raw)
+                values.append(c(v, id=(bank_id, number)))
+
+                number +=1
+
+        def pt100_raw_to_temp(rt, ref_resistor=430.0, rtd_nominal=100.0):
+            RTD_A                    = 3.9083e-3
+            RTD_B                    = -5.775e-7
+
+            rt /= 32768
+            rt *= ref_resistor
+            z1 = -RTD_A
+            z2 = RTD_A * RTD_A - (4 * RTD_B)
+            z3 = (4 * RTD_B) / rtd_nominal
+            z4 = 2 * RTD_B
+            temp = z2 + (z3 * rt)
+            temp = (math.sqrt(temp) + z1) / z4
+            if (temp >= 0):
+                return temp
+            rt /= rtd_nominal
+            rt *= 100
+            rpoly = rt
+            temp = -242.02
+            temp += 2.2228 * rpoly
+            rpoly *= rt
+            temp += 2.5859e-3 * rpoly
+            rpoly *= rt
+            temp -= 4.8260e-6 * rpoly
+            rpoly *= rt
+            temp -= 2.8183e-8 * rpoly
+            rpoly *= rt
+            temp += 1.5243e-10 * rpoly
+
+            return temp
+
+        if pt100_sensor:
+            raw = struct.unpack('<H', pt100_sensor)[0]
+            t = pt100_raw_to_temp(raw)
+            values.append(TempSensor(t, id=255))
+
+        return values, cls.MODULE_SIZE
 
 
 MODULES = [
@@ -421,6 +702,7 @@ MODULES = [
     WindSensor,
     THPCompound,
     WindSpeedDirection,
+    THPCompoundV2,
 ]
 
 _ID_TO_MODULE = {m.MODULE_ID: m for m in MODULES}
@@ -466,7 +748,7 @@ def parse(data: bytes):
         raise Exception("data is not bytes")
     offset = 0
 
-    
+
     if len(data) < 2: # magic byte + version
         raise Exception("invalid header")
 
@@ -494,7 +776,10 @@ def parse(data: bytes):
         if not module_factory:
             raise Exception("unknown module id %d" % module_id)
         module, size = module_factory.parse(data[offset:])
-        df.modules.append(module)
+        if isinstance(module, (list, tuple)):
+            df.modules.extend(module)
+        else:
+            df.modules.append(module)
         offset += size
         sensors_num -= 1
     if sensors_num != 0:

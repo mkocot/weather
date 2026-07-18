@@ -74,8 +74,8 @@ class Pres(Gauge):
     DS_RANGE = (600, 1200)
     DS_TIME = 20
 
-    def __init__(self, value: float):
-        super().__init__(value)
+    def __init__(self, value: float, id: tuple[int, ...]|int|None = None):
+        super().__init__(value, id=id)
 
 
 @final
