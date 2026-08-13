@@ -54,7 +54,7 @@ stype2name = {
     PressureSensor.MODULE_ID: ('pressure', with_id(lambda value, id=None: fetch.Pres(value * 0.01, id=id))),
     HumiditySensor.MODULE_ID: ('humidity', with_id(fetch.Humidity)),
     # scale mV to V
-    VoltSensor.MODULE_ID: ('volt', lambda v: fetch.Volt(v * 0.001)),
+    VoltSensor.MODULE_ID: ('volt', with_id(lambda value, id=None: fetch.Volt(value * 0.001))),
     SoilMoistureSensor.MODULE_ID: ('soil', fetch.Humidity),
     VOCSensor.MODULE_ID: ('voc', None),
     WindSensor.MODULE_ID: ('wind', fetch.WindSpeed),
@@ -262,7 +262,7 @@ class WeatherProcessor:
         self.db.add(df.device_id, sensors.values())
 
         # broadcast
-        if USE_ZMQ:
+        if USE_ZMQ and self.zmq:
             await self.zmq.send_multipart([b'weather/device', str(df.device_id).encode('utf-8')])
             for k, v in sensors.items():
                 topic = f'weather/{df.device_id}/{k}'.encode('utf-8')
