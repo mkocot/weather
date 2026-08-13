@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 from weather import WeatherServerHC12UARTProtocol, WeatherProcessor, cfg
 
 TEST_DIR = Path(__file__).parent
-PACKETS_DIR = TEST_DIR.parent
+PACKETS_DIR = TEST_DIR  # packet files live alongside tests
 
 
 class FakeProcessor:

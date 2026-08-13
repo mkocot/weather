@@ -14,7 +14,7 @@ config.load_config = lambda x: {
 from weather import WeatherServerHC12UARTProtocol, WeatherServerProtocol, WeatherProcessor
 
 TEST_DIR = Path(__file__).parent
-PACKETS_DIR = TEST_DIR.parent
+PACKETS_DIR = TEST_DIR  # packet files live alongside tests
 
 
 @pytest.fixture
