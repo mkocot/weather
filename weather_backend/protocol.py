@@ -2,7 +2,7 @@ import struct
 import codecs
 from io import BytesIO
 import math
-from typing import final
+from typing import Any, final
 from collections import OrderedDict
 
 VERSION = 1
@@ -16,7 +16,7 @@ class BaseModule():
     MODULE_ID = 0x0
     MODULE_SIZE = 4
 
-    def __init__(self, id=None):
+    def __init__(self, id : str | int | None = None):
         self._id = id
 
     @classmethod
@@ -31,7 +31,7 @@ class BaseModule():
         raise NotImplementedError('value')
 
     @property
-    def id(self):
+    def id(self) -> str | int | None:
         return self._id
 
 # don't use directly
@@ -219,7 +219,24 @@ class VOCSensor(BaseModule):
         iaq_static = SimpleFloat32.parse(data[8:12])[0].value
         co2 = SimpleFloat32.parse(data[12:16])[0].value
         flags = data[16]
-        return VOCSensor(gas_raw, iaq, iaq_static, co2, flags), 17
+        # return VOCSensor(gas_raw, iaq, iaq_static, co2, flags), 17
+
+        iaq_static._id = 'iaq_static'
+        iaq._id = 'iaq'
+        co2._id = 'co2'
+        gas_raw = 'gas_raw'
+
+        return (
+            iaq_static,
+            iaq,
+            co2,
+            gas_raw
+        ), cls.MODULE_SIZE
+
+        # sensors['iaq_static'] = fetch.StaticIaq(sid.iaq_static)
+        # sensors['iaq'] = fetch.Iaq(sid.iaq)
+        # sensors['co2'] = fetch.Co2(sid.co2)
+        # sensors['gas_raw'] = fetch.GasResistance(sid.gas_raw)
 
 
 class SoilMoistureSensor(SimpleFloat32):
@@ -523,6 +540,11 @@ class THPCompoundV2(BaseModule):
         self.h = h
         self.p = p
         self.bank = bank
+
+    def decompose(self) -> list[list[int, BaseModule]]:
+
+        return None
+
 
     @classmethod
     def parse(cls, data) -> tuple[list['THPCompoundV2'], int]:

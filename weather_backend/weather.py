@@ -20,7 +20,7 @@ import libscrc
 import fetch
 import protocol
 from config import load_config
-from protocol import (HumiditySensor, PressureSensor, SoilMoistureSensor, THPCompoundV2,
+from protocol import (HumiditySensor, PressureSensor, SimpleFloat32, SoilMoistureSensor, THPCompoundV2,
                       TempSensor, VOCSensor, VoltSensor, WindSensor, THPCompound, WindSpeedDirection, BaseModule)
 
 DEBUG = False
@@ -35,6 +35,19 @@ def with_id(func):
         return func(value=sensor.value, id=sensor.id)
     return _f
 
+def _simple_float(sensor: BaseModule):
+    if sensor.id() == 'iaq_static':
+       return fetch.StaticIaq(sid.value)
+    if sensor.id() == 'iaq':
+       return fetch.Iaq(sid.value)
+    if sensor.id() == 'co2':
+       return fetch.Co2(sid.co2)
+    if sensor.id() == 'gas_raw':
+       return fetch.GasResistance(sid.gas_raw)
+
+    raise Exception(f'not supported: {sensor.id()}')
+
+
 stype2name = {
     TempSensor.MODULE_ID: ('temperature', with_id(fetch.Temp)),
     # scale Pa to hPa
@@ -47,7 +60,8 @@ stype2name = {
     WindSensor.MODULE_ID: ('wind', fetch.WindSpeed),
     THPCompound.MODULE_ID: ('thp', None),
     WindSpeedDirection.MODULE_ID: ('wind+dir', None),
-    THPCompoundV2.MODULE_ID: ('thp2', None)
+    THPCompoundV2.MODULE_ID: ('thp2', None),
+    SimpleFloat32.MODULE_ID: (None, _simple_float)
 }
 
 logging.basicConfig(format='%(asctime)s %(message)s')
@@ -177,14 +191,9 @@ class WeatherProcessor:
                 await self.st.add_screen(df.device_id, addr)
                 continue
 
-            if module_name == 'thp':
+            if sid.MODULE_ID == protocol.THPCompound.MODULE_ID:
                 sensors = self._convert_thp(sid)
-            elif module_name == 'voc':
-                sensors['iaq_static'] = fetch.StaticIaq(sid.iaq_static)
-                sensors['iaq'] = fetch.Iaq(sid.iaq)
-                sensors['co2'] = fetch.Co2(sid.co2)
-                sensors['gas_raw'] = fetch.GasResistance(sid.gas_raw)
-            elif module_name == 'wind' or module_name == 'wind+dir':
+            elif sid.MODULE_ID == protocol.WindSensor.MODULE_ID or sid.MODULE_ID == protocol.WindSpeedDirection.MODULE_ID:
                 # store in db with 10s "delays" counted backward from last entry
                 snapshot_time = fetch.now()
 
@@ -358,7 +367,7 @@ class WeatherServerHC12UARTProtocol(asyncio.Protocol):
             update_task.add_done_callback(lambda x: None)
 
 
-class WeaterServerProtocol(asyncio.DatagramProtocol):
+class WeatherServerProtocol(asyncio.DatagramProtocol):
     def __init__(self, emergency_stop, processor):
         self.processor = processor
         self.emergency_stop = emergency_stop
@@ -385,7 +394,7 @@ def udp_receiver(patocol):
     for sock in patocol.sock:
         async def x(sock):
             emergency_stop = loop.create_future()
-            transport, protocol = await loop.create_datagram_endpoint(lambda: WeaterServerProtocol(emergency_stop, patocol), sock=sock)
+            transport, protocol = await loop.create_datagram_endpoint(lambda: WeatherServerProtocol(emergency_stop, patocol), sock=sock)
             await protocol.emergency_stop
             transport.close()
             sock.close()
