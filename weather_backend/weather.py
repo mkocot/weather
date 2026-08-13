@@ -86,12 +86,13 @@ class WOutEncoder(json.JSONEncoder):
 
 
 class WeatherProcessor:
-    def __init__(self, cfg):
+    def __init__(self, cfg, *, db=None, sockets=None):
         self.cfg = cfg
-        self.sock = list(self._prepare_socket())
+        self.sock = sockets if sockets is not None else list(self._prepare_socket())
         self.zmq = None
         # hold active devices, prune if timeout is larger than 30min
         self.sensors = {}
+        self.db = db if db is not None else DB
         if USE_ZMQ:
             self._prepare_zmq()
 
@@ -228,7 +229,7 @@ class WeatherProcessor:
 
                 for value, current_time in reversed(reversed_sensors):
                     print('wind', value)
-                    DB.add(df.device_id, value, current_time=current_time)
+                    self.db.add(df.device_id, value, current_time=current_time)
 
                 # it's finally fixed and sensor contains already prescaled
                 # values so no more thinking about bucket size and ticsk
@@ -258,7 +259,7 @@ class WeatherProcessor:
             else:
                 print('should not happen')
 
-        DB.add(df.device_id, sensors.values())
+        self.db.add(df.device_id, sensors.values())
 
         # broadcast
         if USE_ZMQ:
