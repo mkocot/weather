@@ -1,9 +1,13 @@
 import asyncio
 import pytest
+from pathlib import Path
 import libscrc
 import protocol
 from unittest.mock import patch, MagicMock
 from weather import WeatherServerHC12UARTProtocol, WeatherProcessor, cfg
+
+TEST_DIR = Path(__file__).parent
+PACKETS_DIR = TEST_DIR.parent
 
 
 class FakeProcessor:
@@ -213,7 +217,7 @@ class TestRealPacketFiles:
 
     def test_packet_file_full_pipeline(self, fake_db, mock_loop):
         """Test packet.hc12 through the full processing pipeline."""
-        with open('packet.hc12') as f:
+        with open(PACKETS_DIR / 'packet.hc12') as f:
             lines = f.read().strip().split('\n')
 
         proto = WeatherServerHC12UARTProtocol(None, WeatherProcessor(cfg, db=fake_db, sockets=[]))
@@ -246,7 +250,7 @@ class TestRealPacketFiles:
         v1 packets fail because stype2name is not defined in test context, so we only verify
         that v2 packets produce WindSpeed/WindDirection DB entries.
         """
-        with open('packet-s1.hc12') as f:
+        with open(PACKETS_DIR / 'packet-s1.hc12') as f:
             lines = f.read().strip().split('\n')
 
         proto = WeatherServerHC12UARTProtocol(None, WeatherProcessor(cfg, db=fake_db, sockets=[]))
