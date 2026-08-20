@@ -185,10 +185,12 @@ class TestTHPCompound:
         data[2:4] = struct.pack('<H', 1)  # t=1
         data[4] = 50  # h=50
         data[5:7] = struct.pack('<H', 300)  # p=300
-        sensor, size = protocol.THPCompound.parse(data)
+        sensors, size = protocol.THPCompound.parse(data)
         assert size == module_size
-        assert isinstance(sensor, protocol.THPCompound)
-        assert len(sensor.values) == 1
+        assert isinstance(sensors, list)
+        # 1 entry with t, h, p produces 3 sensor objects
+        assert len(sensors) == 3
+        assert {type(s).__name__ for s in sensors} == {'TempSensor', 'HumiditySensor', 'PressureSensor'}
 
 
 class TestTHPCompoundV2:

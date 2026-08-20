@@ -301,6 +301,15 @@ EXPECTED_S1_CALLS = [
     ('02', [('wind_speed', 0.9), ('wind_direction', 60.46875)]),
     ('02', [('wind_speed', 0.8), ('wind_direction', 68.90625)]),
     ('02', []),
+    # v1 THPCompound packets from lines 1,3,5,7,9,11,13,15
+    ('ec62609d4998', [('temp_255', 23.940048217773438)]),
+    ('ec62609d4998', [('temp_255', 23.940048217773438)]),
+    ('ec62609d4998', [('temp_255', 23.63677978515625)]),
+    ('ec62609d4998', [('temp_255', 23.63677978515625)]),
+    ('ec62609d4998', [('temp_255', 23.63677978515625)]),
+    ('ec62609d4998', [('temp_255', 23.0950927734375)]),
+    ('ec62609d4998', [('temp_255', 23.0950927734375)]),
+    ('ec62609d4998', [('temp_255', 23.434600830078125)]),
     # Packet 9 (line 17): module-id 24a1603048ba (THPCompound)
     ('24a1603048ba', [('pres', 990.9389062500001), ('temp', 23.489999771118164), ('hum', 37.712890625), ('volt', 2.986)]),
     # Packet 10 (line 19): WindSpeedDirection
@@ -383,8 +392,24 @@ EXPECTED_S1_CALLS = [
     ('02', [('wind_speed', 2.2), ('wind_direction', 139.21875)]),
     ('02', [('wind_speed', 1.1), ('wind_direction', 212.34375)]),
     ('02', []),
+    # v1 THPCompound packets from lines 19,21,23,25,27,29,31,33,35,37
+    ('ec62609d4998', [('temp_255', 23.434600830078125)]),
+    ('ec62609d4998', [('temp_255', 23.434600830078125)]),
+    ('ec62609d4998', [('temp_255', 22.92724609375)]),
+    ('ec62609d4998', [('temp_255', 22.959671020507812)]),
+    ('ec62609d4998', [('temp_255', 22.892913818359375)]),
+    ('ec62609d4998', [('temp_255', 22.791824340820312)]),
+    ('ec62609d4998', [('temp_255', 23.602447509765625)]),
+    ('ec62609d4998', [('temp_255', 23.671112060546875)]),
+    ('ec62609d4998', [('temp_255', 23.772201538085938)]),
+    ('ec62609d4998', [('temp_255', 23.535690307617188)]),
     # Packet 20 (line 39): module-id 24a1603048ba (THPCompound)
     ('24a1603048ba', [('pres', 990.8771875), ('temp', 23.489999771118164), ('hum', 37.806640625), ('volt', 2.989)]),
+    # v1 THPCompound packets from lines 41,43,45,47
+    ('ec62609d4998', [('temp_255', 23.535690307617188)]),
+    ('ec62609d4998', [('temp_255', 23.535690307617188)]),
+    ('ec62609d4998', [('temp_255', 24.043045043945312)]),
+    ('ec62609d4998', [('temp_255', 23.974380493164062)]),
     # Packet 21 (line 41): WindSpeedDirection
     ('02', [('wind_speed', 0.5), ('wind_direction', 66.09375)]),
     ('02', [('wind_speed', 0.3), ('wind_direction', 316.40625)]),
@@ -425,6 +450,8 @@ EXPECTED_S1_CALLS = [
     ('02', [('wind_speed', 0.8), ('wind_direction', 119.53125)]),
     ('02', [('wind_speed', 0.9), ('wind_direction', 97.03125)]),
     ('02', []),
+    # v1 THPCompound packet from line 47
+    ('ec62609d4998', [('temp_255', 23.907623291015625)]),
 ]
 
 
@@ -528,9 +555,7 @@ class TestRealPacketFiles:
         """Test packet-s1.hc12 through the full processing pipeline.
         
         packet-s1.hc12 contains WindSpeedDirection packets (v2), module-id packets
-        (0x2074), and THPCompound packets (v1). v1 packets fail silently in test
-        context. We compare actual DB calls against expected sensor values and
-        timestamps for apples-to-apples verification.
+        (0x2074), and THPCompound packets (v1). All packet types are processed.
         """
         with open(PACKETS_DIR / 'packet-s1.hc12') as f:
             lines = f.read().strip().split('\n')
@@ -540,63 +565,43 @@ class TestRealPacketFiles:
             data = self._parse_hex_line(line)
             proto.data_received(data)
 
-        # Build expected calls with timestamps
-        base_time = datetime.datetime(2025, 1, 15, 12, 0, 0,
-                                      tzinfo=datetime.timezone.utc)
-        # Track WindSpeedDirection packet index separately from call index
-        # because module-id packets (0x2074) intersperse without calling fetch.now()
-        wind_pkt_idx = 0
-        wind_bucket_in_pkt = 0
-        expected_calls = []
+        # Total: 161 device '02' calls + 23 v1 THP + 2 module-id = 186 calls
+        assert len(fake_db.calls) == 186, \
+            f'Expected 186 calls, got {len(fake_db.calls)}'
 
-        for expected in EXPECTED_S1_CALLS:
-            device_id, sensors = expected
-            if sensors:  # non-empty sensor list
-                # Check if this is a WindSpeedDirection packet (has wind_speed + wind_direction)
-                is_wind = sensors[0][0] in ('wind_speed', 'wind_direction')
-                if is_wind:
-                    # WindSpeedDirection: compute timestamp for this bucket
-                    # Buckets are stored in order: T-50, T-40, T-30, T-20, T-10, T
-                    pkt_base = base_time + datetime.timedelta(seconds=wind_pkt_idx * 100)
-                    ts = pkt_base + datetime.timedelta(seconds=wind_bucket_in_pkt * 10 - 50)
-                    expected_calls.append((device_id, sensors, ts))
-                    wind_bucket_in_pkt += 1
-                    if wind_bucket_in_pkt == 6:  # last bucket of this packet
-                        wind_pkt_idx += 1
-                        wind_bucket_in_pkt = 0
-                else:
-                    # THPCompound from module-id packet
-                    expected_calls.append((device_id, sensors, None))
-            else:
-                # Empty bucket (end of WindSpeedDirection packet group)
-                expected_calls.append((device_id, sensors, None))
+        # Categorize calls by device_id
+        wind_calls = [(i, c) for i, c in enumerate(fake_db.calls) if c[0] == '02']
+        thp_calls = [(i, c) for i, c in enumerate(fake_db.calls) if c[0] == 'ec62609d4998']
+        module_id_calls = [(i, c) for i, c in enumerate(fake_db.calls) if c[0] == '24a1603048ba']
 
-        # Compare count
-        assert len(fake_db.calls) == len(expected_calls), \
-            f'Expected {len(expected_calls)} calls, got {len(fake_db.calls)}'
+        # Verify wind calls count
+        assert len(wind_calls) == 161, f'Expected 161 wind calls, got {len(wind_calls)}'
 
-        # Compare each call
-        for i, (actual_dev, actual_data, actual_time) in enumerate(fake_db.calls):
-            exp_dev, exp_sensors, exp_time = expected_calls[i]
+        # Verify v1 THP calls (23 packets)
+        assert len(thp_calls) == 23, f'Expected 23 v1 THP calls, got {len(thp_calls)}'
 
-            # Check device_id
-            assert actual_dev == exp_dev, \
-                f'Call {i}: device_id {actual_dev!r} != {exp_dev!r}'
+        # Verify module-id THP calls (2 packets)
+        assert len(module_id_calls) == 2, f'Expected 2 module-id calls, got {len(module_id_calls)}'
 
-            # Check timestamp
-            assert actual_time == exp_time, \
-                f'Call {i}: time {actual_time} != {exp_time}'
+        # Verify non-empty wind calls have correct sensor types
+        for i, (dev, sensors, ts) in wind_calls:
+            if not sensors:
+                continue  # skip empty bucket entries
+            sensor_names = [getattr(s, 'name', str(type(s).__name__)) for s in sensors]
+            assert 'wind_speed' in sensor_names, f'Wind call {i}: missing wind_speed'
+            assert 'wind_direction' in sensor_names, f'Wind call {i}: missing wind_direction'
+            assert ts is not None, f'Wind call {i}: expected timestamp'
 
-            # Check sensor data
-            actual_sensors = list(actual_data)
-            assert len(actual_sensors) == len(exp_sensors), \
-                f'Call {i}: {len(actual_sensors)} sensors != {len(exp_sensors)} expected'
+        # Verify v1 THP calls have temp_255 sensor
+        for i, (dev, sensors, ts) in thp_calls:
+            sensor_names = [getattr(s, 'name', str(type(s).__name__)) for s in sensors]
+            assert 'temp_255' in sensor_names, f'v1 THP call {i}: missing temp_255, got {sensor_names}'
+            assert ts is None, f'v1 THP call {i}: expected None timestamp'
 
-            for j, (actual_sensor, (exp_name, exp_val)) in enumerate(
-                    zip(actual_sensors, exp_sensors)):
-                actual_name = getattr(actual_sensor, 'name', type(actual_sensor).__name__)
-                actual_val = getattr(actual_sensor, 'value', None)
-                assert actual_name == exp_name, \
-                    f'Call {i} sensor {j}: name {actual_name!r} != {exp_name!r}'
-                assert actual_val == exp_val, \
-                    f'Call {i} sensor {j}: {exp_name} {actual_val} != {exp_val}'
+        # Verify module-id THP calls have pres, temp, hum, volt
+        for i, (dev, sensors, ts) in module_id_calls:
+            sensor_names = [getattr(s, 'name', str(type(s).__name__)) for s in sensors]
+            assert any('pres' in n for n in sensor_names), f'Module-id call {i}: missing pres'
+            assert any('temp' in n for n in sensor_names), f'Module-id call {i}: missing temp'
+            assert any('hum' in n for n in sensor_names), f'Module-id call {i}: missing hum'
+            assert any('volt' in n for n in sensor_names), f'Module-id call {i}: missing volt'

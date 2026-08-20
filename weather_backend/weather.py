@@ -141,33 +141,6 @@ class WeatherProcessor:
         )
         return x
 
-    def _convert_thp(self, sid: THPCompound):
-        # This is just for "presentation" layer
-        # it might change in future as it's not straight reauired
-        # and might mess something
-        required_defaults = set(('temperature', 'pressure', 'humidity'))
-
-        sensors = {}
-
-        for bank_id, sensor in sid.decompose():
-            module_name, converter = stype2name[sensor.MODULE_ID]
-            if not converter:
-                print('Unsupported module id:', sid.MODULE_ID)
-                continue
-
-            converted = converter(sensor.value, id=bank_id)
-
-            sensors[converted.name] = converted
-
-            if module_name in required_defaults:
-                print('Missing default for:', module_name, 'create from', converted.name)
-                v = converter(sensor.value)
-                sensors[v.name] = v
-
-                required_defaults.remove(module_name)
-
-        return sensors
-
     async def process(self, data, *, addr=None):
         try:
             df = protocol.parse(data)
@@ -192,9 +165,7 @@ class WeatherProcessor:
                 await self.st.add_screen(df.device_id, addr)
                 continue
 
-            if sid.MODULE_ID == protocol.THPCompound.MODULE_ID:
-                sensors = self._convert_thp(sid)
-            elif sid.MODULE_ID == protocol.WindSensor.MODULE_ID or sid.MODULE_ID == protocol.WindSpeedDirection.MODULE_ID:
+            if sid.MODULE_ID == protocol.WindSensor.MODULE_ID or sid.MODULE_ID == protocol.WindSpeedDirection.MODULE_ID:
                 # store in db with 10s "delays" counted backward from last entry
                 snapshot_time = fetch.now()
 

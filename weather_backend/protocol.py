@@ -313,12 +313,13 @@ class THPCompound(BaseModule):
         if len(data) != cls.MODULE_SIZE:
             raise Exception('INVALID SIZE')
 
-        values: list[THPCompound.THP] = []
-
         entries = data[0]
         data = data[1:]
 
-        for i in range(entries):
+        # Collect sensors per bank_id, preserving sorted order
+        banks: OrderedDict[int, list[BaseModule]] = OrderedDict()
+
+        for _ in range(entries):
             bank_id = data[0]
             t = struct.unpack('H', data[1:3])[0]
             h = data[3]
@@ -329,74 +330,25 @@ class THPCompound(BaseModule):
             h = unpack(h, 8, 0, 100)
             p = unpack(p, 16, 300, 110000)
             print('UPK', bank_id, t, h, p)
-            values.append(cls.THP(bank_id, t, h, p))
 
+            # Build per-bank sensor list
+            bank_sensors = []
+            if not math.isnan(t):
+                bank_sensors.append(TempSensor(t, id=bank_id))
+            if not math.isnan(h):
+                bank_sensors.append(HumiditySensor(h, id=bank_id))
+            if not math.isnan(p):
+                bank_sensors.append(PressureSensor(p, id=bank_id))
+
+            banks[bank_id] = banks.get(bank_id, []) + bank_sensors
             data = data[6:]
 
-        values.sort(key = lambda x: x.bank_id)
+        # Flatten into a single list (like THPCompoundV2.parse does)
+        sensors: list[BaseModule] = []
+        for bank_sensors in banks.values():
+            sensors.extend(bank_sensors)
 
-        intermediate = cls(values)
-        converted = intermediate._convert_thp()
-
-        return cls(values), cls.MODULE_SIZE
-
-    def _convert_thp(self):
-        # This is just for "presentation" layer
-        # it might change in future as it's not straight reauired
-        # and might mess something
-        required_defaults = set(('temperature', 'pressure', 'humidity'))
-
-        sensors = {}
-
-        for bank_id, sensor in self.decompose():
-            module_name, converter = stype2name[sensor.MODULE_ID]
-            if not converter:
-                print('Unsupported module id:', sid.MODULE_ID)
-                continue
-
-            converted = converter(sensor.value, id=bank_id)
-
-            sensors[converted.name] = converted
-
-            if module_name in required_defaults:
-                print('Missing default for:', module_name, 'create from', converted.name)
-                v = converter(sensor.value)
-                sensors[v.name] = v
-
-                required_defaults.remove(module_name)
-
-        return sensors
-
-    def decompose(self):
-        # Keep original (already sorted) order of banks
-        banks: OrderedDict[int, list[list[BaseModule]]] = OrderedDict()
-
-        for r in self.values:
-            converted= []
-            if not math.isnan(r.t):
-                converted.append(TempSensor(r.t))
-
-            if not math.isnan(r.h):
-                converted.append(HumiditySensor(r.h))
-
-            if not math.isnan(r.p):
-                converted.append(PressureSensor(r.p))
-
-            banks[r.bank_id] = banks.get(r.bank_id, []) + [converted]
-
-        sensors: list[tuple[tuple[int, int] | int, BaseModule]] = []
-        # group by banks
-        for bank_id, entries in banks.items():
-            print(bank_id, entries)
-
-            if len(entries) == 1:
-                sensors.extend((bank_id, e) for e in entries[0])
-                continue
-
-            for index, values in enumerate(entries):
-                sensors.extend(((bank_id, index), e) for e in values)
-
-        return sensors
+        return sensors, cls.MODULE_SIZE
 
 @final
 class WindSpeedDirection(BaseModule):
