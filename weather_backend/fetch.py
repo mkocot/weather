@@ -3,7 +3,29 @@ from os.path import join
 from datetime import timedelta, datetime as dt, timezone
 from typing import final
 import sqlite3
-from warnings import deprecated
+try:
+    from warnings import deprecated  # Python >= 3.13  # pyright: ignore[reportAssignmentType]
+    # (typeshed types it as a class with a generic __call__; our 3.12 fallback
+    # below is structurally simpler. Runtime behavior is identical.)
+except ImportError:
+    # Python <= 3.12: warnings.deprecated only exists from 3.13 on.
+    # Same shape as the real one (a class whose __call__ wraps fn), so
+    # pyright sees an identical type in both branches.
+    import functools
+    import warnings as _warnings
+
+    class deprecated:
+        def __init__(self, message, *, category=DeprecationWarning, stacklevel=1):
+            self.message = message
+            self.category = category
+            self.stacklevel = stacklevel
+
+        def __call__(self, fn):
+            @functools.wraps(fn)
+            def wrapper(*args, **kwargs):
+                _warnings.warn(self.message, self.category, stacklevel=self.stacklevel + 1)
+                return fn(*args, **kwargs)
+            return wrapper
 
 TIME = 24 * 60 * 60
 ENABLE_DUCK_DB = False
