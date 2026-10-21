@@ -23,7 +23,7 @@ class BaseModule():
     def parse(cls, data: bytes):
         raise NotImplementedError("parse")
 
-    def serialize(self):
+    def serialize(self, buffer):
         raise NotImplementedError("serialize")
 
     @property
@@ -54,7 +54,7 @@ class Simple4Bytes(BaseModule):
         if not isinstance(data, bytes):
             raise Exception("expected bytes")
         if len(data) < 4:  # 4 bytes
-            raise Exception("invalid sieze")
+            raise Exception("invalid size")
         return struct.unpack(cls.BYTE_FORMAT, data[:4])[0], 4
 
 # don't use directly
@@ -123,6 +123,18 @@ class HumiditySensor(SimpleFloat32):
 
     def __str__(self):
         return f'hum: {self.value}'
+
+
+class PT100RawSensor(SimpleUint32):
+    '''Virtual module: carries the raw PT100 uint16 wire code (0..65535),
+    unprocessed. It never appears on the wire itself; THPCompoundV2.parse emits
+    it alongside TempSensor(id=255) so the backend can store the raw code next
+    to the derived temperature. Not registered in _ID_TO_MODULE (MODULE_ID is
+    only a dispatch key inside weather.py's stype2name).'''
+    MODULE_ID = 0x7F
+
+    def __init__(self, value, **kwargs):
+        super().__init__(value, **kwargs)
 
 
 class PressureSensor(BaseModule):
@@ -439,7 +451,7 @@ class WindSpeedDirection(BaseModule):
         if len(data) < cls.MODULE_SIZE:
             raise Exception("too short")
 
-        decoded: list[tuple[int, float]]= []
+        decoded: list[tuple[float, float]] = []
         for i in range(cls.BUCKETS):
             speed, dir = cls.get_speed_dir_v2(data, i)
             #speed_v1, dir_v1 = cls.get_speed_dir_v1(data, i)
@@ -452,6 +464,39 @@ class WindSpeedDirection(BaseModule):
             decoded.append((speed, dir))
 
         return cls(decoded), cls.MODULE_SIZE
+
+def pt100_raw_to_temp(rt, ref_resistor=430.0, rtd_nominal=100.0):
+    '''Convert a raw PT100 uint16 wire code to temperature in degC using the
+    IEC 60751 (Callendar-Van Dusen) polynomial. rt is the code as received
+    (0..65535): code/32768 * ref_resistor yields the RTD resistance in ohms.'''
+    RTD_A = 3.9083e-3
+    RTD_B = -5.775e-7
+
+    rt /= 32768
+    rt *= ref_resistor
+    z1 = -RTD_A
+    z2 = RTD_A * RTD_A - (4 * RTD_B)
+    z3 = (4 * RTD_B) / rtd_nominal
+    z4 = 2 * RTD_B
+    temp = z2 + (z3 * rt)
+    temp = (math.sqrt(temp) + z1) / z4
+    if (temp >= 0):
+        return temp
+    rt /= rtd_nominal
+    rt *= 100
+    rpoly = rt
+    temp = -242.02
+    temp += 2.2228 * rpoly
+    rpoly *= rt
+    temp += 2.5859e-3 * rpoly
+    rpoly *= rt
+    temp -= 4.8260e-6 * rpoly
+    rpoly *= rt
+    temp -= 2.8183e-8 * rpoly
+    rpoly *= rt
+    temp += 1.5243e-10 * rpoly
+
+    return temp
 
 class THPCompoundV2(BaseModule):
     MODULE_ID = 0x13
@@ -493,9 +538,9 @@ class THPCompoundV2(BaseModule):
         self.p = p
         self.bank = bank
 
-    def decompose(self) -> list[list[int, BaseModule]]:
+    def decompose(self) -> list[list[int | BaseModule]]:
 
-        return None
+        return []
 
 
     @classmethod
@@ -610,6 +655,20 @@ class THPCompoundV2(BaseModule):
             (h_sensors, unpack_hum, HumiditySensor),
         )
 
+        def is_sentinel(raw):
+            # Slot-preserving emission (ADR-0014): a dead slot inside a
+            # partially-alive bank is emitted as a placeholder value so the
+            # survivor keeps its true ordinal. Temp/pressure are 16-bit and
+            # use 0xFFFF (84.9976 degC / 109.999 kPa, 3 mK from T_MAX);
+            # humidity is 8-bit and uses 0x00 (0.0 %RH is doubtful, while
+            # 0xFF = 99.6 %RH is a perfectly valid reading).
+            if isinstance(raw, bytes):
+                if len(raw) == 2:
+                    return raw == b'\xff\xff'
+                if len(raw) == 1:
+                    return raw[0] == 0x00
+            return False
+
         values = []
 
         for s, u, c in upacker:
@@ -620,47 +679,29 @@ class THPCompoundV2(BaseModule):
                     last_bank_id = bank_id
                     number = 0
 
+                if is_sentinel(raw):
+                    # keep the slot position so later ordinals stay true
+                    number += 1
+                    continue
+
                 v = u(raw)
                 values.append(c(v, id=(bank_id, number)))
 
-                number +=1
-
-        def pt100_raw_to_temp(rt, ref_resistor=430.0, rtd_nominal=100.0):
-            RTD_A                    = 3.9083e-3
-            RTD_B                    = -5.775e-7
-
-            rt /= 32768
-            rt *= ref_resistor
-            z1 = -RTD_A
-            z2 = RTD_A * RTD_A - (4 * RTD_B)
-            z3 = (4 * RTD_B) / rtd_nominal
-            z4 = 2 * RTD_B
-            temp = z2 + (z3 * rt)
-            temp = (math.sqrt(temp) + z1) / z4
-            if (temp >= 0):
-                return temp
-            rt /= rtd_nominal
-            rt *= 100
-            rpoly = rt
-            temp = -242.02
-            temp += 2.2228 * rpoly
-            rpoly *= rt
-            temp += 2.5859e-3 * rpoly
-            rpoly *= rt
-            temp -= 4.8260e-6 * rpoly
-            rpoly *= rt
-            temp -= 2.8183e-8 * rpoly
-            rpoly *= rt
-            temp += 1.5243e-10 * rpoly
-
-            return temp
+                number += 1
 
         if pt100_sensor:
             raw = struct.unpack('<H', pt100_sensor)[0]
-            t = pt100_raw_to_temp(raw)
-            values.append(TempSensor(t, id=255))
+            # 0xFFFF is the dead-channel sentinel (ADR-0014): skip the PT100
+            # channel instead of letting pt100_raw_to_temp raise and drop the
+            # whole frame (healthy sensors would be lost).
+            if raw != 0xFFFF:
+                values.append(TempSensor(pt100_raw_to_temp(raw), id=255))
+                values.append(PT100RawSensor(raw, id=255))
 
-        return values, cls.MODULE_SIZE
+        # MODULE_SIZE (inherited 4) is not the real size: THP2 is variable
+        # length. Return the consumed length so protocol.parse's module walk
+        # stays aligned on multi-module frames.
+        return values, index
 
 
 MODULES = [
@@ -748,7 +789,7 @@ def parse(data: bytes):
         offset += 1
         module_factory = _ID_TO_MODULE.get(module_id)
         if not module_factory:
-            raise Exception("unknown module id %d" % module_id)
+            raise Exception(f"unknown module id {module_id}")
         module, size = module_factory.parse(data[offset:])
         if isinstance(module, (list, tuple)):
             df.modules.extend(module)
@@ -757,5 +798,5 @@ def parse(data: bytes):
         offset += size
         sensors_num -= 1
     if sensors_num != 0:
-        raise Exception("Missing data for %d modules" % sensors_num)
+        raise Exception(f"Missing data for {sensors_num} modules")
     return df

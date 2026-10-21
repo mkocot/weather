@@ -21,7 +21,8 @@ import fetch
 import protocol
 from config import load_config
 from protocol import (HumiditySensor, PressureSensor, SimpleFloat32, SoilMoistureSensor, THPCompoundV2,
-                      TempSensor, VOCSensor, VoltSensor, WindSensor, THPCompound, WindSpeedDirection, BaseModule)
+                      TempSensor, VOCSensor, VoltSensor, WindSensor, THPCompound, WindSpeedDirection, BaseModule,
+                      PT100RawSensor)
 
 DEBUG = False
 USE_ZMQ = True
@@ -50,6 +51,7 @@ def _simple_float(sensor: BaseModule):
 
 stype2name = {
     TempSensor.MODULE_ID: ('temperature', with_id(fetch.Temp)),
+    PT100RawSensor.MODULE_ID: ('pt100', with_id(fetch.PT100Raw)),
     # scale Pa to hPa
     PressureSensor.MODULE_ID: ('pressure', with_id(lambda value, id=None: fetch.Pres(value * 0.01, id=id))),
     HumiditySensor.MODULE_ID: ('humidity', with_id(fetch.Humidity)),

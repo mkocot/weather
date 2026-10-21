@@ -59,6 +59,20 @@ class Temp(Gauge):
 
 
 @final
+class PT100Raw(Gauge):
+    '''Raw PT100 uint16 wire code (0..65535) as received from the firmware,
+    unprocessed. The derived temperature lives in Temp(id=255) as temp_255;
+    the raw code is stored here (pt100_255) so history can be re-derived
+    with different reference-resistor constants.'''
+    DS_NAME = "pt100"
+    DS_RANGE = (0, 65535)
+    DS_TIME = 20
+
+    def __init__(self, value: float, id: tuple[int,...]|int|None = None):
+        super().__init__(value, id=id)
+
+
+@final
 class Humidity(Gauge):
     DS_NAME = "hum"
     DS_RANGE = (0, 100)

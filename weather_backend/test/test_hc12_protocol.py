@@ -470,6 +470,7 @@ EXPECTED_PACKET_CALLS = [
         ('hum_2_0', 76.5625),
         ('hum_3_0', 76.5625),
         ('temp_255', 28.780794255173717),
+        ('pt100_255', 8474),
     ]),
     ('03', [
         ('temp_0_0', 26.011428833007812),
@@ -483,6 +484,7 @@ EXPECTED_PACKET_CALLS = [
         ('hum_2_0', 76.953125),
         ('hum_3_0', 76.5625),
         ('temp_255', 28.950119322373205),
+        ('pt100_255', 8479),
     ]),
     ('03', [
         ('temp_0_0', 26.026687622070312),
@@ -496,6 +498,7 @@ EXPECTED_PACKET_CALLS = [
         ('hum_2_0', 76.953125),
         ('hum_3_0', 76.5625),
         ('temp_255', 28.916253625252278),
+        ('pt100_255', 8478),
     ]),
 ]
 
@@ -511,7 +514,8 @@ class TestRealPacketFiles:
         """Test packet.hc12 through the full processing pipeline.
 
         packet.hc12 contains 3 module-id 0x2078 packets, each producing one
-        THPCompound DB call with temp_X_Y, pres_X_Y, hum_X_Y sensors.
+        THPCompound DB call with temp_X_Y, pres_X_Y, hum_X_Y sensors and the
+        raw PT100 code (pt100_255) next to the derived temperature (temp_255).
         """
         with open(PACKETS_DIR / 'packet.hc12') as f:
             lines = f.read().strip().split('\n')

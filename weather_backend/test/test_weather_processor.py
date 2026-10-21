@@ -236,3 +236,45 @@ class TestVersion1Header:
 
         proto.data_received(full)
         assert len(fake_db.calls) == 1
+
+
+class TestTHPCompoundV2PT100:
+    """PT100 raw code and derived temp both reach the DB as pt100_255/temp_255."""
+
+    def _thp2_modules(self, payload):
+        modules = bytes([0x13]) + payload
+        return make_protocol_payload(magic='W', version=2, device_id=0x02,
+                                     sensors_num=1, modules=modules)
+
+    def _process(self, payload, fake_db, mock_loop):
+        full = build_hc12_packet(2, self._thp2_modules(payload))
+        proc = WeatherProcessor(cfg, db=fake_db, sockets=[])
+        proto = HC12Proto(None, proc)
+        proto.data_received(full)
+        return fake_db
+
+    def test_pt100_raw_and_temp_stored(self, fake_db, mock_loop):
+        # THP2 with only a PT100 reading: t_cfg=0x10 (pt100 bit), uint16 code,
+        # then the always-present pressure/humidity config bytes (both 0)
+        code = 8358
+        payload = bytes([0x10]) + struct.pack('<H', code) + bytes([0x00, 0x00])
+        self._process(payload, fake_db, mock_loop)
+
+        assert len(fake_db.calls) == 1
+        device_id, data, _ = fake_db.calls[0]
+        assert device_id == '02'
+        by_name = {d.name: d for d in data}
+        assert by_name['pt100_255'].value == code
+        assert by_name['temp_255'].value == pytest.approx(protocol.pt100_raw_to_temp(code), rel=1e-9)
+
+    def test_pt100_ffff_sentinel_skips_channel(self, fake_db, mock_loop):
+        # dead PT100 (0xFFFF): channel skipped, healthy temp on same frame kept
+        payload = bytes([0x11, 0x00]) + struct.pack('<H', 0x0100) + struct.pack('<H', 0xFFFF) + bytes([0x00, 0x00])
+        self._process(payload, fake_db, mock_loop)
+
+        assert len(fake_db.calls) == 1
+        _, data, _ = fake_db.calls[0]
+        by_name = {d.name: d for d in data}
+        assert 'pt100_255' not in by_name
+        assert 'temp_255' not in by_name
+        assert 'temp_0_0' in by_name
